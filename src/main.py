@@ -247,7 +247,22 @@ async def _seed_default_jobs(scheduler: JobScheduler, config: Settings) -> None:
         working_directory=work_dir,
     )
 
-    log.info("Seeded default scheduled jobs: morning + evening portfolio status")
+    # Daily Health Report — 20:00 São Paulo (UTC-3 = 23:00 UTC)
+    health_report_prompt = (
+        "Run the strategy health report and send results to Telegram. "
+        "Execute: cd ~/ft_userdata && python3 strategy_health_report.py 2>&1 "
+        "Then summarize the key findings: which bots are healthy, which have red flags, "
+        "and any recommendations. Keep it concise."
+    )
+    await scheduler.add_job(
+        job_name="Daily Strategy Health Report",
+        cron_expression="0 23 * * *",
+        prompt=health_report_prompt,
+        target_chat_ids=chat_ids,
+        working_directory=work_dir,
+    )
+
+    log.info("Seeded default scheduled jobs: morning + evening portfolio status + daily health report")
 
 
 async def run_application(app: Dict[str, Any]) -> None:
