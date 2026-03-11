@@ -2,10 +2,11 @@
 
 AgentHandler: translates events into ClaudeIntegration.run_command() calls.
 NotificationHandler: subscribes to AgentResponseEvent and delivers to Telegram.
+FreqtradeHandler: formats Freqtrade trade notifications for Telegram delivery.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -44,6 +45,10 @@ class AgentHandler:
     async def handle_webhook(self, event: Event) -> None:
         """Process a webhook event through Claude."""
         if not isinstance(event, WebhookEvent):
+            return
+
+        # Skip Freqtrade events — handled by FreqtradeHandler directly
+        if event.provider == "freqtrade":
             return
 
         logger.info(
@@ -184,3 +189,137 @@ class AgentHandler:
                 self._flatten_dict(item, lines, f"{prefix}[{i}]", depth + 1, max_depth)
         else:
             lines.append(f"{prefix}: {data}")
+
+
+class FreqtradeHandler:
+    """Formats Freqtrade trade webhook notifications for Telegram delivery.
+
+    Intercepts WebhookEvents from the 'freqtrade' provider and publishes
+    formatted AgentResponseEvents directly — no Claude processing needed.
+    """
+
+    def __init__(self, event_bus: EventBus) -> None:
+        self.event_bus = event_bus
+
+    def register(self) -> None:
+        """Subscribe to webhook events."""
+        self.event_bus.subscribe(WebhookEvent, self.handle_freqtrade)
+
+    async def handle_freqtrade(self, event: Event) -> None:
+        """Format and publish a Freqtrade webhook event."""
+        if not isinstance(event, WebhookEvent):
+            return
+        if event.provider != "freqtrade":
+            return
+
+        payload = event.payload
+        msg_type = payload.get("type", event.event_type_name)
+
+        logger.info(
+            "Freqtrade webhook received",
+            msg_type=msg_type,
+            delivery_id=event.delivery_id,
+        )
+
+        text = self._format_message(msg_type, payload)
+        if not text:
+            logger.warning("Unknown Freqtrade message type", msg_type=msg_type)
+            return
+
+        await self.event_bus.publish(
+            AgentResponseEvent(
+                chat_id=0,  # broadcast to default notification chats
+                text=text,
+                parse_mode="HTML",
+                originating_event_id=event.id,
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Formatters
+    # ------------------------------------------------------------------
+
+    # Only send important updates: filled trades and closed trades
+    IMPORTANT_TYPES = {"entry_fill", "exit_fill", "exit"}
+
+    def _format_message(self, msg_type: str, p: Dict[str, Any]) -> Optional[str]:
+        """Route to the appropriate formatter. Returns None for noisy events."""
+        if msg_type not in self.IMPORTANT_TYPES:
+            logger.debug("Skipping non-important Freqtrade event", msg_type=msg_type)
+            return None
+
+        if msg_type == "entry_fill":
+            return self._format_entry_fill(p)
+        if msg_type in ("exit_fill", "exit"):
+            return self._format_exit_fill(p)
+        return None
+
+    def _format_entry_fill(self, p: Dict[str, Any]) -> str:
+        pair = p.get("pair", "?")
+        stake = p.get("stake_amount", "?")
+        rate = p.get("open_rate", p.get("limit", "?"))
+        currency = p.get("stake_currency", "USDT")
+        direction = p.get("direction", "Long")
+
+        return (
+            f"\U0001f7e2 <b>{pair}</b> \u2014 {direction}\n"
+            f"\u2514 {self._fmt_num(stake)} {currency} @ {self._fmt_num(rate)}"
+        )
+
+    def _format_exit_fill(self, p: Dict[str, Any]) -> str:
+        pair = p.get("pair", "?")
+        profit_pct = self._to_float(p.get("profit_ratio", 0))
+        profit_amount = self._to_float(p.get("profit_amount"))
+        currency = p.get("stake_currency", "USDT")
+        exit_reason = p.get("exit_reason", p.get("sell_reason", "?"))
+        duration = p.get("duration", "?")
+        open_rate = p.get("open_rate", "?")
+        close_rate = p.get("close_rate", p.get("limit", "?"))
+
+        pct_display = f"{profit_pct * 100:+.2f}%" if profit_pct is not None else "?"
+        is_win = profit_pct is not None and profit_pct >= 0
+        emoji = "\u2705" if is_win else "\u274c"
+
+        lines = [
+            f"{emoji} <b>{pair}</b> \u2014 <b>{pct_display}</b>",
+            f"\u2514 {self._fmt_num(open_rate)} \u2192 {self._fmt_num(close_rate)}",
+        ]
+        if profit_amount is not None:
+            lines.append(f"\u2514 P/L: <b>{profit_amount:+.2f} {currency}</b>")
+        lines.append(f"\u2514 {exit_reason} \u2022 {self._fmt_duration(duration)}")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        """Safely convert to float, returning None on failure."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _fmt_num(value: Any) -> str:
+        """Format a number nicely, or return as-is if not numeric."""
+        try:
+            f = float(value)
+            return f"{f:.8f}".rstrip("0").rstrip(".")
+        except (ValueError, TypeError):
+            return str(value)
+
+    @staticmethod
+    def _fmt_duration(value: Any) -> str:
+        """Format duration (minutes or string) into a readable form."""
+        if isinstance(value, (int, float)):
+            mins = int(value)
+            if mins >= 60:
+                hours = mins // 60
+                remaining = mins % 60
+                return f"{hours}h {remaining}m"
+            return f"{mins}m"
+        return str(value)

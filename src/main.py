@@ -20,7 +20,7 @@ from src.claude.sdk_integration import ClaudeSDKManager
 from src.config.features import FeatureFlags
 from src.config.settings import Settings
 from src.events.bus import EventBus
-from src.events.handlers import AgentHandler
+from src.events.handlers import AgentHandler, FreqtradeHandler
 from src.events.middleware import EventSecurityMiddleware
 from src.exceptions import ConfigurationError
 from src.notifications.service import NotificationService
@@ -169,6 +169,10 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         default_user_id=config.allowed_users[0] if config.allowed_users else 0,
     )
     agent_handler.register()
+
+    # Freqtrade handler — formats trade notifications directly (no Claude)
+    freqtrade_handler = FreqtradeHandler(event_bus=event_bus)
+    freqtrade_handler.register()
 
     # Create bot with all dependencies
     dependencies = {

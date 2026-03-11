@@ -66,6 +66,13 @@ def create_api_app(
 
             event_type_name = x_github_event or "unknown"
             delivery_id = x_github_delivery or str(uuid.uuid4())
+        elif provider == "freqtrade":
+            # Freqtrade webhooks run on a private network (Docker -> host)
+            # and don't support Bearer auth. Accept without auth.
+            event_type_name = request.headers.get("X-Event-Type", "unknown")
+            delivery_id = request.headers.get(
+                "X-Delivery-ID", str(uuid.uuid4())
+            )
         else:
             # Generic provider — require auth (fail-closed)
             secret = settings.webhook_api_secret
@@ -83,9 +90,19 @@ def create_api_app(
             event_type_name = request.headers.get("X-Event-Type", "unknown")
             delivery_id = request.headers.get("X-Delivery-ID", str(uuid.uuid4()))
 
-        # Parse JSON payload
+        # Parse payload — try JSON first, then form-encoded
+        content_type = request.headers.get("content-type", "")
         try:
-            payload: Dict[str, Any] = await request.json()
+            if "application/x-www-form-urlencoded" in content_type:
+                from urllib.parse import parse_qs, unquote
+
+                decoded = body.decode("utf-8", errors="replace")
+                parsed = parse_qs(decoded, keep_blank_values=True)
+                payload: Dict[str, Any] = {
+                    k: v[0] if len(v) == 1 else v for k, v in parsed.items()
+                }
+            else:
+                payload = await request.json()
         except Exception:
             payload = {"raw_body": body.decode("utf-8", errors="replace")[:5000]}
 
