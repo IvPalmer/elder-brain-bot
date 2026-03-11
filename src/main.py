@@ -208,6 +208,48 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     }
 
 
+async def _seed_default_jobs(scheduler: JobScheduler, config: Settings) -> None:
+    """Seed default scheduled jobs if none exist yet."""
+    log = structlog.get_logger()
+    existing = await scheduler.list_jobs()
+    if existing:
+        log.debug("Scheduled jobs already exist, skipping seed", count=len(existing))
+        return
+
+    chat_ids = config.notification_chat_ids or []
+    work_dir = Path("/Users/palmer/ft_userdata")
+
+    status_prompt = (
+        "Query all Freqtrade bots for a portfolio status update. "
+        "For each bot (ports 8080, 8082, 8083, 8084, 8086, 8087, 8089), "
+        "use curl -s -u freqtrader:mastertrader http://localhost:PORT/api/v1/status "
+        "and http://localhost:PORT/api/v1/profit to get open trades and profit. "
+        "Summarize as a concise daily status: total portfolio P/L, number of open trades, "
+        "top winners, top losers, any bots that look unhealthy. Keep it under 300 words. "
+        "Format for Telegram (plain text, no markdown)."
+    )
+
+    # Morning status — 9:00 AM São Paulo (UTC-3 = 12:00 UTC)
+    await scheduler.add_job(
+        job_name="Morning Portfolio Status",
+        cron_expression="0 12 * * *",
+        prompt=status_prompt,
+        target_chat_ids=chat_ids,
+        working_directory=work_dir,
+    )
+
+    # Evening status — 9:00 PM São Paulo (UTC-3 = 00:00 UTC next day)
+    await scheduler.add_job(
+        job_name="Evening Portfolio Status",
+        cron_expression="0 0 * * *",
+        prompt=status_prompt,
+        target_chat_ids=chat_ids,
+        working_directory=work_dir,
+    )
+
+    log.info("Seeded default scheduled jobs: morning + evening portfolio status")
+
+
 async def run_application(app: Dict[str, Any]) -> None:
     """Run the application with graceful shutdown handling."""
     logger = structlog.get_logger()
@@ -318,6 +360,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 default_working_directory=config.approved_directory,
             )
             await scheduler.start()
+            await _seed_default_jobs(scheduler, config)
             logger.info("Job scheduler enabled")
 
         # Shutdown task

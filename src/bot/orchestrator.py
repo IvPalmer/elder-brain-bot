@@ -6,6 +6,7 @@ classic mode, delegates to existing full-featured handlers.
 """
 
 import asyncio
+import base64
 import re
 import time
 from pathlib import Path
@@ -342,6 +343,15 @@ class MessageOrchestrator:
         app.add_handler(
             MessageHandler(filters.VOICE, self._inject_deps(self.agentic_voice)),
             group=10,
+        )
+
+        # Catch-all for unregistered /commands — forward to Claude as text
+        app.add_handler(
+            MessageHandler(
+                filters.TEXT & filters.COMMAND,
+                self._inject_deps(self.agentic_text),
+            ),
+            group=20,
         )
 
         # Only cd: callbacks (for project selection), scoped by pattern
@@ -1003,72 +1013,93 @@ class MessageOrchestrator:
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
 
-        # Try to combine text + images in one message when possible
-        caption_sent = False
-        if images and len(formatted_messages) == 1:
-            msg = formatted_messages[0]
-            if msg.text and len(msg.text) <= 1024:
+        # Check if user requested voice/audio reply
+        reply_as_voice = self._wants_voice_reply(message_text)
+        tts_sent = False
+        if reply_as_voice and formatted_messages:
+            features = context.bot_data.get("features")
+            tts_handler = features.get_tts_handler() if features else None
+            if tts_handler:
+                full_text = "\n".join(
+                    m.text for m in formatted_messages if m.text and m.text.strip()
+                )
                 try:
-                    caption_sent = await self._send_images(
-                        update,
-                        images,
-                        reply_to_message_id=update.message.message_id,
-                        caption=msg.text,
-                        caption_parse_mode=msg.parse_mode,
-                    )
-                except Exception as img_err:
-                    logger.warning("Image+caption send failed", error=str(img_err))
+                    audio_path = await tts_handler.text_to_voice(full_text)
+                    if audio_path and audio_path.exists():
+                        with open(audio_path, "rb") as audio_file:
+                            await update.message.reply_voice(voice=audio_file)
+                        audio_path.unlink(missing_ok=True)
+                        tts_sent = True
+                except Exception as tts_err:
+                    logger.warning("TTS voice reply failed", error=str(tts_err))
 
-        # Send text messages (skip if caption was already embedded in photos)
-        if not caption_sent:
-            for i, message in enumerate(formatted_messages):
-                if not message.text or not message.text.strip():
-                    continue
-                try:
-                    await update.message.reply_text(
-                        message.text,
-                        parse_mode=message.parse_mode,
-                        reply_markup=None,  # No keyboards in agentic mode
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
-                    )
-                    if i < len(formatted_messages) - 1:
-                        await asyncio.sleep(0.5)
-                except Exception as send_err:
-                    logger.warning(
-                        "Failed to send HTML response, retrying as plain text",
-                        error=str(send_err),
-                        message_index=i,
-                    )
+        if not tts_sent:
+            # Try to combine text + images in one message when possible
+            caption_sent = False
+            if images and len(formatted_messages) == 1:
+                msg = formatted_messages[0]
+                if msg.text and len(msg.text) <= 1024:
+                    try:
+                        caption_sent = await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                            caption=msg.text,
+                            caption_parse_mode=msg.parse_mode,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image+caption send failed", error=str(img_err))
+
+            # Send text messages (skip if caption was already embedded in photos)
+            if not caption_sent:
+                for i, message in enumerate(formatted_messages):
+                    if not message.text or not message.text.strip():
+                        continue
                     try:
                         await update.message.reply_text(
                             message.text,
-                            reply_markup=None,
+                            parse_mode=message.parse_mode,
+                            reply_markup=None,  # No keyboards in agentic mode
                             reply_to_message_id=(
                                 update.message.message_id if i == 0 else None
                             ),
                         )
-                    except Exception as plain_err:
-                        await update.message.reply_text(
-                            f"Failed to deliver response "
-                            f"(Telegram error: {str(plain_err)[:150]}). "
-                            f"Please try again.",
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
+                        if i < len(formatted_messages) - 1:
+                            await asyncio.sleep(0.5)
+                    except Exception as send_err:
+                        logger.warning(
+                            "Failed to send HTML response, retrying as plain text",
+                            error=str(send_err),
+                            message_index=i,
                         )
+                        try:
+                            await update.message.reply_text(
+                                message.text,
+                                reply_markup=None,
+                                reply_to_message_id=(
+                                    update.message.message_id if i == 0 else None
+                                ),
+                            )
+                        except Exception as plain_err:
+                            await update.message.reply_text(
+                                f"Failed to deliver response "
+                                f"(Telegram error: {str(plain_err)[:150]}). "
+                                f"Please try again.",
+                                reply_to_message_id=(
+                                    update.message.message_id if i == 0 else None
+                                ),
+                            )
 
-            # Send images separately if caption wasn't used
-            if images:
-                try:
-                    await self._send_images(
-                        update,
-                        images,
-                        reply_to_message_id=update.message.message_id,
-                    )
-                except Exception as img_err:
-                    logger.warning("Image send failed", error=str(img_err))
+                # Send images separately if caption wasn't used
+                if images:
+                    try:
+                        await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image send failed", error=str(img_err))
 
         # Audit log
         audit_logger = context.bot_data.get("audit_logger")
@@ -1281,10 +1312,32 @@ class MessageOrchestrator:
             processed_image = await image_handler.process_image(
                 photo, update.message.caption
             )
+
+            # Save image to temp file so Claude can read it with its Read tool
+            import tempfile
+
+            img_format = processed_image.metadata.get("format", "png") if processed_image.metadata else "png"
+            tmp_img = tempfile.NamedTemporaryFile(
+                suffix=f".{img_format}", delete=False, dir="/tmp"
+            )
+            tmp_img.write(base64.b64decode(processed_image.base64_data))
+            tmp_img.close()
+
+            # Build prompt that tells Claude where to find the image
+            caption = update.message.caption or ""
+            image_prompt = (
+                f"The user sent an image. It has been saved to {tmp_img.name}. "
+                f"Use the Read tool to view the image file at that path. "
+            )
+            if caption:
+                image_prompt += f"The user's message: {caption}"
+            else:
+                image_prompt += "Analyze the image and respond helpfully."
+
             await self._handle_agentic_media_message(
                 update=update,
                 context=context,
-                prompt=processed_image.prompt,
+                prompt=image_prompt,
                 progress_msg=progress_msg,
                 user_id=user_id,
                 chat=chat,
@@ -1329,6 +1382,7 @@ class MessageOrchestrator:
                 progress_msg=progress_msg,
                 user_id=user_id,
                 chat=chat,
+                reply_as_voice=True,
             )
 
         except Exception as e:
@@ -1348,6 +1402,7 @@ class MessageOrchestrator:
         progress_msg: Any,
         user_id: int,
         chat: Any,
+        reply_as_voice: bool = False,
     ) -> None:
         """Run a media-derived prompt through Claude and send responses."""
         claude_integration = context.bot_data.get("claude_integration")
@@ -1412,43 +1467,90 @@ class MessageOrchestrator:
         # Use MCP-collected images (from send_image_to_user tool calls).
         images: List[ImageAttachment] = mcp_images_media
 
-        caption_sent = False
-        if images and len(formatted_messages) == 1:
-            msg = formatted_messages[0]
-            if msg.text and len(msg.text) <= 1024:
-                try:
-                    caption_sent = await self._send_images(
-                        update,
-                        images,
-                        reply_to_message_id=update.message.message_id,
-                        caption=msg.text,
-                        caption_parse_mode=msg.parse_mode,
-                    )
-                except Exception as img_err:
-                    logger.warning("Image+caption send failed", error=str(img_err))
-
-        if not caption_sent:
-            for i, message in enumerate(formatted_messages):
-                if not message.text or not message.text.strip():
-                    continue
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=None,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+        # Send TTS voice reply if the input was a voice message
+        tts_sent = False
+        if reply_as_voice and formatted_messages:
+            features = context.bot_data.get("features")
+            tts_handler = features.get_tts_handler() if features else None
+            if tts_handler:
+                full_text = "\n".join(
+                    m.text for m in formatted_messages if m.text and m.text.strip()
                 )
-                if i < len(formatted_messages) - 1:
-                    await asyncio.sleep(0.5)
-
-            if images:
                 try:
-                    await self._send_images(
-                        update,
-                        images,
-                        reply_to_message_id=update.message.message_id,
+                    audio_path = await tts_handler.text_to_voice(full_text)
+                    if audio_path and audio_path.exists():
+                        with open(audio_path, "rb") as audio_file:
+                            await update.message.reply_voice(voice=audio_file)
+                        audio_path.unlink(missing_ok=True)
+                        tts_sent = True
+                except Exception as tts_err:
+                    logger.warning("TTS voice reply failed", error=str(tts_err))
+
+        # Send text reply (skip if TTS voice was already sent)
+        if not tts_sent:
+            caption_sent = False
+            if images and len(formatted_messages) == 1:
+                msg = formatted_messages[0]
+                if msg.text and len(msg.text) <= 1024:
+                    try:
+                        caption_sent = await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                            caption=msg.text,
+                            caption_parse_mode=msg.parse_mode,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image+caption send failed", error=str(img_err))
+
+            if not caption_sent:
+                for i, message in enumerate(formatted_messages):
+                    if not message.text or not message.text.strip():
+                        continue
+                    await update.message.reply_text(
+                        message.text,
+                        parse_mode=message.parse_mode,
+                        reply_markup=None,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
                     )
-                except Exception as img_err:
-                    logger.warning("Image send failed", error=str(img_err))
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+
+                if images:
+                    try:
+                        await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image send failed", error=str(img_err))
+
+    @staticmethod
+    def _wants_voice_reply(text: str) -> bool:
+        """Check if user is requesting an audio/voice reply."""
+        lower = text.lower()
+        voice_keywords = [
+            "responde com audio", "responde com áudio",
+            "responda com audio", "responda com áudio",
+            "responde em audio", "responde em áudio",
+            "responda em audio", "responda em áudio",
+            "reply with audio", "reply with voice",
+            "respond with audio", "respond with voice",
+            "answer with audio", "answer with voice",
+            "reply in audio", "reply in voice",
+            "respond in audio", "respond in voice",
+            "answer in audio", "answer in voice",
+            "send audio", "send voice",
+            "manda audio", "manda áudio",
+            "manda um audio", "manda um áudio",
+            "envia audio", "envia áudio",
+            "envia um audio", "envia um áudio",
+            "fala pra mim", "me fala",
+        ]
+        return any(kw in lower for kw in voice_keywords)
 
     def _voice_unavailable_message(self) -> str:
         """Return provider-aware guidance when voice feature is unavailable."""
