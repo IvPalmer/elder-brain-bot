@@ -219,50 +219,50 @@ async def _seed_default_jobs(scheduler: JobScheduler, config: Settings) -> None:
     chat_ids = config.notification_chat_ids or []
     work_dir = Path("/Users/palmer/ft_userdata")
 
-    status_prompt = (
-        "Query all Freqtrade bots for a portfolio status update. "
-        "For each bot (ports 8080, 8082, 8083, 8084, 8086, 8087, 8089), "
-        "use curl -s -u freqtrader:mastertrader http://localhost:PORT/api/v1/status "
-        "and http://localhost:PORT/api/v1/profit to get open trades and profit. "
-        "Summarize as a concise daily status: total portfolio P/L, number of open trades, "
-        "top winners, top losers, any bots that look unhealthy. Keep it under 300 words. "
-        "Format for Telegram (plain text, no markdown)."
+    # All reports use ai_health_report.py — Claude-powered analysis with fallback.
+    # --brief for morning/evening (short status), full for nightly deep analysis.
+    ai_report_prompt = (
+        "Run the AI health report script and send its output as the Telegram message. "
+        "Execute exactly this command:\n\n"
+        "  cd ~/ft_userdata && python3 ai_health_report.py {flags} --stdout 2>&1\n\n"
+        "Send the ENTIRE output as-is to Telegram. Do not summarize, edit, or add commentary. "
+        "The script already produces the final formatted report.\n\n"
+        "If the script fails, run the fallback:\n"
+        "  cd ~/ft_userdata && python3 strategy_health_report.py --stdout 2>&1\n\n"
+        'And send that output instead, prefixed with "[FALLBACK]".'
     )
 
-    # Morning status — 9:00 AM São Paulo (UTC-3 = 12:00 UTC)
+    brief_prompt = ai_report_prompt.replace("{flags}", "--brief")
+    full_prompt = ai_report_prompt.replace("{flags}", "")
+
+    # Morning status — 9:00 AM São Paulo (APScheduler uses local time)
     await scheduler.add_job(
         job_name="Morning Portfolio Status",
-        cron_expression="0 12 * * *",
-        prompt=status_prompt,
+        cron_expression="0 9 * * *",
+        prompt=brief_prompt,
         target_chat_ids=chat_ids,
         working_directory=work_dir,
     )
 
-    # Evening status — 9:00 PM São Paulo (UTC-3 = 00:00 UTC next day)
+    # Evening status — 9:00 PM São Paulo (APScheduler uses local time)
     await scheduler.add_job(
         job_name="Evening Portfolio Status",
-        cron_expression="0 0 * * *",
-        prompt=status_prompt,
+        cron_expression="0 21 * * *",
+        prompt=brief_prompt,
         target_chat_ids=chat_ids,
         working_directory=work_dir,
     )
 
-    # Daily Health Report — 20:00 São Paulo (UTC-3 = 23:00 UTC)
-    health_report_prompt = (
-        "Run the strategy health report and send results to Telegram. "
-        "Execute: cd ~/ft_userdata && python3 strategy_health_report.py 2>&1 "
-        "Then summarize the key findings: which bots are healthy, which have red flags, "
-        "and any recommendations. Keep it concise."
-    )
+    # Daily AI Health Report — 11:00 PM São Paulo (APScheduler uses local time)
     await scheduler.add_job(
-        job_name="Daily Strategy Health Report",
+        job_name="Daily Deep Trade Analysis",
         cron_expression="0 23 * * *",
-        prompt=health_report_prompt,
+        prompt=full_prompt,
         target_chat_ids=chat_ids,
         working_directory=work_dir,
     )
 
-    log.info("Seeded default scheduled jobs: morning + evening portfolio status + daily health report")
+    log.info("Seeded default scheduled jobs: morning + evening (brief) + nightly (full) AI reports")
 
 
 async def run_application(app: Dict[str, Any]) -> None:

@@ -239,8 +239,8 @@ class FreqtradeHandler:
     # Formatters
     # ------------------------------------------------------------------
 
-    # Only send closed trade results — suppress entry notifications to reduce noise
-    IMPORTANT_TYPES = {"exit_fill", "exit"}
+    # Only send closed trade results and status messages — suppress entry notifications to reduce noise
+    IMPORTANT_TYPES = {"exit_fill", "exit", "status"}
 
     def _format_message(self, msg_type: str, p: Dict[str, Any]) -> Optional[str]:
         """Route to the appropriate formatter. Returns None for noisy events."""
@@ -248,6 +248,8 @@ class FreqtradeHandler:
             logger.debug("Skipping non-important Freqtrade event", msg_type=msg_type)
             return None
 
+        if msg_type == "status":
+            return p.get("status", "")
         if msg_type == "entry_fill":
             return self._format_entry_fill(p)
         if msg_type in ("exit_fill", "exit"):
