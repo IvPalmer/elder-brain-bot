@@ -38,6 +38,9 @@ class NotificationService:
         self._running = False
         self._sender_task: Optional[asyncio.Task[None]] = None
 
+        # Delivery tracking (optional, wired after construction)
+        self.delivery_tracker: Optional["DeliveryTracker"] = None  # noqa: F821
+
     def register(self) -> None:
         """Subscribe to agent response events."""
         self.event_bus.subscribe(AgentResponseEvent, self.handle_response)
@@ -123,6 +126,12 @@ class NotificationService:
                 chunks=len(chunks),
                 originating_event=event.originating_event_id,
             )
+
+            # Track successful delivery
+            if self.delivery_tracker:
+                self.delivery_tracker.record_sent(
+                    event_id=event.id, chat_id=chat_id, message_id=0
+                )
         except TelegramError as e:
             logger.error(
                 "Failed to send notification",
@@ -130,6 +139,12 @@ class NotificationService:
                 error=str(e),
                 event_id=event.id,
             )
+
+            # Track failed delivery
+            if self.delivery_tracker:
+                self.delivery_tracker.record_failed(
+                    event_id=event.id, chat_id=chat_id, error=str(e)
+                )
 
     def _split_message(self, text: str, max_length: int = 4096) -> List[str]:
         """Split long messages at paragraph boundaries."""

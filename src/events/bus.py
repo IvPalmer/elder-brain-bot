@@ -3,6 +3,9 @@
 Decouples event sources (Telegram, webhooks, cron) from handlers
 (agent execution, notifications). All inputs become typed events
 routed to registered handlers.
+
+Enhanced with dead-letter queue (DLQ) for failed events and
+pre/post hook support, inspired by Claude Code patterns.
 """
 
 import asyncio
@@ -37,6 +40,8 @@ class EventBus:
 
     Handlers subscribe to specific event types and are called
     concurrently when a matching event is published.
+
+    Enhanced with optional DLQ and hook support.
     """
 
     def __init__(self) -> None:
@@ -45,6 +50,20 @@ class EventBus:
         self._running = False
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._processor_task: Optional[asyncio.Task[None]] = None
+        self._retry_task: Optional[asyncio.Task[None]] = None
+
+        # Optional DLQ — set via set_dlq()
+        self._dlq: Optional[Any] = None
+        # Optional hooks — set via set_hooks()
+        self._hooks: Optional[Any] = None
+
+    def set_dlq(self, dlq: Any) -> None:
+        """Attach a DeadLetterQueue for failed event retry."""
+        self._dlq = dlq
+
+    def set_hooks(self, hooks: Any) -> None:
+        """Attach a HookRegistry for pre/post event hooks."""
+        self._hooks = hooks
 
     def subscribe(
         self,
@@ -110,6 +129,17 @@ class EventBus:
 
     async def _dispatch(self, event: Event) -> None:
         """Dispatch event to all matching handlers concurrently."""
+        # Fire pre-dispatch hooks
+        if self._hooks:
+            try:
+                from .hooks import HookTiming
+
+                await self._hooks.fire(
+                    event.event_type, HookTiming.PRE, {"event": event}
+                )
+            except Exception:
+                logger.debug("Pre-dispatch hook error", event_type=event.event_type)
+
         handlers: List[EventHandler] = []
 
         # Collect type-specific handlers (including parent classes)
@@ -130,8 +160,10 @@ class EventBus:
             return_exceptions=True,
         )
 
+        has_failures = False
         for i, result in enumerate(results):
             if isinstance(result, Exception):
+                has_failures = True
                 logger.error(
                     "Event handler failed",
                     event_type=event.event_type,
@@ -139,6 +171,23 @@ class EventBus:
                     handler=handlers[i].__qualname__,
                     error=str(result),
                 )
+
+        # Add failed events to DLQ for retry
+        if has_failures and self._dlq:
+            self._dlq.add(event, error="Handler failure during dispatch")
+
+        # Fire post-dispatch hooks
+        if self._hooks:
+            try:
+                from .hooks import HookTiming
+
+                await self._hooks.fire(
+                    event.event_type,
+                    HookTiming.POST,
+                    {"event": event, "had_failures": has_failures},
+                )
+            except Exception:
+                logger.debug("Post-dispatch hook error", event_type=event.event_type)
 
     async def _safe_call(self, handler: EventHandler, event: Event) -> None:
         """Call handler with error isolation."""

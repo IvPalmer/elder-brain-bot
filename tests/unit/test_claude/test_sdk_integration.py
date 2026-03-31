@@ -486,7 +486,8 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
-        assert captured_options[0].disallowed_tools == ["WebFetch", "WebSearch"]
+        # Pre-filtering removes disallowed from allowed list, so disallowed is None
+        assert captured_options[0].disallowed_tools is None
 
     async def test_allowed_tools_passed_to_options(self, tmp_path):
         """Test that allowed_tools from config are passed to ClaudeAgentOptions."""
@@ -515,6 +516,7 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
+        # Pre-filtering returns the allowed list as-is when no disallowed tools
         assert captured_options[0].allowed_tools == ["Read", "Write", "Bash"]
 
     async def test_disable_tool_validation_sets_allowed_tools_none(self, tmp_path):
@@ -578,8 +580,9 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
+        # Pre-filtering: "WebFetch" removed from allowed, disallowed is None
         assert captured_options[0].allowed_tools == ["Read", "Write"]
-        assert captured_options[0].disallowed_tools == ["WebFetch"]
+        assert captured_options[0].disallowed_tools is None
 
     async def test_empty_cli_path_coerced_to_none(self, tmp_path):
         """Empty CLAUDE_CLI_PATH ('') is coerced to None so SDK auto-discovers the CLI."""
