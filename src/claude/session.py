@@ -238,15 +238,35 @@ class SessionManager:
 
     async def cleanup_expired_sessions(self) -> int:
         """Remove expired sessions."""
-        logger.info("Starting session cleanup")
+        timeout = self.config.session_timeout_hours
+        logger.info(
+            "Starting session cleanup",
+            timeout_hours=timeout,
+        )
 
         all_sessions = await self.storage.get_all_sessions()
         expired_count = 0
 
         for session in all_sessions:
-            if session.is_expired(self.config.session_timeout_hours):
+            age = datetime.now(UTC) - _to_utc(session.last_used)
+            age_hours = age.total_seconds() / 3600
+            if session.is_expired(timeout):
+                logger.info(
+                    "Removing expired session",
+                    session_id=session.session_id,
+                    last_used=session.last_used.isoformat(),
+                    age_hours=round(age_hours, 1),
+                    timeout_hours=timeout,
+                )
                 await self.remove_session(session.session_id)
                 expired_count += 1
+            else:
+                logger.debug(
+                    "Session still valid",
+                    session_id=session.session_id,
+                    age_hours=round(age_hours, 1),
+                    timeout_hours=timeout,
+                )
 
         logger.info("Session cleanup completed", expired_sessions=expired_count)
         return expired_count
@@ -304,3 +324,37 @@ class SessionManager:
             "total_messages": total_messages,
             "projects": list(set(str(s.project_path) for s in sessions)),
         }
+
+
+@dataclass
+class SessionPage:
+    """A page of session results."""
+
+    items: List[ClaudeSession]
+    total: int
+    offset: int
+    page_size: int
+    has_more: bool
+
+
+def paginate_sessions(
+    sessions: List[ClaudeSession],
+    page_size: int = 20,
+    offset: int = 0,
+) -> SessionPage:
+    """Paginate a list of sessions.
+
+    Inspired by Claude Code's HISTORY_PAGE_SIZE=100 cursor-based pagination.
+    """
+    total = len(sessions)
+    sorted_sessions = sorted(sessions, key=lambda s: s.last_used, reverse=True)
+    page_items = sorted_sessions[offset : offset + page_size]
+    has_more = (offset + page_size) < total
+
+    return SessionPage(
+        items=page_items,
+        total=total,
+        offset=offset,
+        page_size=page_size,
+        has_more=has_more,
+    )

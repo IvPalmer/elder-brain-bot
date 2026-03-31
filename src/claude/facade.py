@@ -3,6 +3,7 @@
 Provides simple interface for bot handlers.
 """
 
+import contextvars
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -13,6 +14,18 @@ from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
 
 logger = structlog.get_logger()
+
+# Per-async-task agent context — prevents concurrent sessions from
+# bleeding into each other. Inspired by Claude Code's
+# AsyncLocalStorage<AgentContext> pattern.
+agent_context: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "agent_context", default=None
+)
+
+
+def get_current_agent_context() -> Optional[Dict[str, Any]]:
+    """Get the current agent context for this async task."""
+    return agent_context.get()
 
 
 class ClaudeIntegration:
@@ -87,17 +100,25 @@ class ClaudeIntegration:
                     stream_callback=on_stream,
                 )
             except Exception as resume_error:
-                # If resume failed (e.g., session expired/missing on Claude's side),
-                # retry as a fresh session.  The CLI returns a generic exit-code-1
-                # when the session is gone, so we catch *any* error during resume.
+                # If resume failed, retry as a fresh session but preserve the
+                # old session in the database so it can be retried later.
+                # Only permanently remove sessions on definitive errors (e.g.
+                # "session not found"), not transient ones like timeouts.
                 if should_continue:
+                    from .exceptions import ClaudeTimeoutError
+
+                    is_transient = isinstance(resume_error, ClaudeTimeoutError)
+
                     logger.warning(
                         "Session resume failed, starting fresh session",
                         failed_session_id=claude_session_id,
                         error=str(resume_error),
+                        transient=is_transient,
                     )
-                    # Clean up the stale session
-                    await self.session_manager.remove_session(session.session_id)
+
+                    if not is_transient:
+                        # Definitive failure — session is gone on Claude's side
+                        await self.session_manager.remove_session(session.session_id)
 
                     # Create a fresh session and retry
                     session = await self.session_manager.get_or_create_session(
@@ -267,9 +288,12 @@ class ClaudeIntegration:
         }
 
     async def shutdown(self) -> None:
-        """Shutdown integration and cleanup resources."""
+        """Shutdown integration and cleanup resources.
+
+        Note: we intentionally do NOT run cleanup_expired_sessions() here.
+        Cleanup during shutdown was incorrectly destroying valid sessions,
+        preventing session resume after bot restarts.  Session cleanup
+        should only happen on a periodic schedule, not on every shutdown.
+        """
         logger.info("Shutting down Claude integration")
-
-        await self.cleanup_expired_sessions()
-
         logger.info("Claude integration shutdown complete")

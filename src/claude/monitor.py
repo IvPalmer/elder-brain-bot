@@ -163,6 +163,68 @@ def _is_claude_internal_path(file_path: str) -> bool:
         return False
 
 
+# Tools that always write
+_WRITE_TOOLS: Set[str] = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+# Bash commands that are destructive
+_DESTRUCTIVE_BASH_PATTERNS: Set[str] = {
+    "rm",
+    "rmdir",
+    "mv",
+    "git push",
+    "git reset",
+    "git rebase",
+    "docker rm",
+    "docker rmi",
+    "drop table",
+    "delete from",
+}
+
+# Bash commands that are read-only
+_READONLY_BASH_PREFIXES: Set[str] = {
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "grep",
+    "find",
+    "wc",
+    "echo",
+    "pwd",
+    "which",
+    "git status",
+    "git log",
+    "git diff",
+    "git branch",
+    "pip list",
+    "npm list",
+    "poetry show",
+}
+
+
+def is_destructive_tool_use(tool_name: str, tool_input: dict) -> bool:
+    """Check if a tool use is destructive (writes, deletes, sends).
+
+    Inspired by Claude Code's per-tool isDestructive() method.
+    """
+    if tool_name in _WRITE_TOOLS:
+        return True
+
+    if tool_name in ("Bash", "bash", "shell"):
+        command = tool_input.get("command", "").strip().lower()
+        # Check read-only first
+        for prefix in _READONLY_BASH_PREFIXES:
+            if command.startswith(prefix):
+                return False
+        # Check destructive patterns
+        for pattern in _DESTRUCTIVE_BASH_PATTERNS:
+            if pattern in command:
+                return True
+        return False
+
+    return False
+
+
 def _is_within_directory(path: Path, directory: Path) -> bool:
     """Check if path is within directory."""
     try:

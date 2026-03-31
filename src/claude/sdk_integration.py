@@ -41,6 +41,21 @@ from .monitor import _is_claude_internal_path, check_bash_directory_boundary
 logger = structlog.get_logger()
 
 
+def filter_denied_tools(
+    allowed_tools: list[str],
+    disallowed_tools: list[str] | None,
+) -> list[str]:
+    """Remove disallowed tools before sending to Claude (saves tokens).
+
+    Inspired by Claude Code's filterToolsByDenyRules() which removes tools
+    before the model sees them, not just at call time.
+    """
+    if not disallowed_tools:
+        return list(allowed_tools)
+    deny_set = set(disallowed_tools)
+    return [t for t in allowed_tools if t not in deny_set]
+
+
 @dataclass
 class ClaudeResponse:
     """Response from Claude Code SDK."""
@@ -126,6 +141,21 @@ def _make_can_use_tool_callback(
     return can_use_tool
 
 
+def filter_denied_tools(
+    allowed_tools: list[str],
+    disallowed_tools: list[str] | None,
+) -> list[str]:
+    """Remove disallowed tools before sending to Claude (saves tokens).
+
+    Inspired by Claude Code's filterToolsByDenyRules() which removes tools
+    before the model sees them, not just at call time.
+    """
+    if not disallowed_tools:
+        return list(allowed_tools)
+    deny_set = set(disallowed_tools)
+    return [t for t in allowed_tools if t not in deny_set]
+
+
 class ClaudeSDKManager:
     """Manage Claude Code SDK integration."""
 
@@ -191,8 +221,11 @@ class ClaudeSDKManager:
                 sdk_allowed_tools = None
                 sdk_disallowed_tools = None
             else:
-                sdk_allowed_tools = self.config.claude_allowed_tools
-                sdk_disallowed_tools = self.config.claude_disallowed_tools
+                sdk_allowed_tools = filter_denied_tools(
+                    self.config.claude_allowed_tools or [],
+                    self.config.claude_disallowed_tools,
+                )
+                sdk_disallowed_tools = None  # Already filtered out
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
@@ -210,7 +243,7 @@ class ClaudeSDKManager:
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
-                setting_sources=["project"],
+                setting_sources=["user", "project"],
                 stderr=_stderr_callback,
             )
 

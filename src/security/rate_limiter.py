@@ -292,3 +292,53 @@ class RateLimiter:
             )
 
         return len(inactive_users)
+
+
+class OperationRateLimiter:
+    """Per-operation rate limiting.
+
+    Inspired by Claude Code's per-tool permission budgets.
+    Each operation type has its own daily counter per user.
+    """
+
+    def __init__(
+        self,
+        limits: Dict[str, int],
+        window_seconds: int = 86400,
+    ) -> None:
+        self.limits = limits
+        self.window_seconds = window_seconds
+        self._counters: Dict[int, Dict[str, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
+        self._window_start: Dict[int, datetime] = {}
+        self._locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def check(
+        self, user_id: int, operation: str
+    ) -> Tuple[bool, Optional[str]]:
+        """Check if an operation is allowed for a user."""
+        if operation not in self.limits:
+            return True, None
+
+        async with self._locks[user_id]:
+            self._maybe_reset(user_id)
+            current = self._counters[user_id][operation]
+            limit = self.limits[operation]
+
+            if current >= limit:
+                return False, (
+                    f"Operation rate limit exceeded for '{operation}': "
+                    f"{current}/{limit} per {self.window_seconds // 3600}h"
+                )
+
+            self._counters[user_id][operation] += 1
+            return True, None
+
+    def _maybe_reset(self, user_id: int) -> None:
+        """Reset counters if window has elapsed."""
+        now = datetime.now(UTC)
+        start = self._window_start.get(user_id, now - timedelta(days=1))
+        if (now - start).total_seconds() >= self.window_seconds:
+            self._counters[user_id] = defaultdict(int)
+            self._window_start[user_id] = now

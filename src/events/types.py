@@ -52,3 +52,63 @@ class AgentResponseEvent(Event):
     reply_to_message_id: Optional[int] = None
     source: str = "agent"
     originating_event_id: Optional[str] = None
+
+
+@dataclass
+class ToolExecutedEvent(Event):
+    """A Claude tool was executed."""
+
+    tool_name: str = ""
+    duration_ms: float = 0.0
+    success: bool = True
+    error_type: Optional[str] = None
+    user_id: int = 0
+    source: str = "tool"
+
+
+@dataclass
+class FileChangedEvent(Event):
+    """A file was created, edited, or deleted."""
+
+    file_path: str = ""
+    change_type: str = ""  # "create", "edit", "delete"
+    user_id: int = 0
+    source: str = "tool"
+
+
+@dataclass
+class SessionStartEvent(Event):
+    """A Claude session started."""
+
+    user_id: int = 0
+    session_id: str = ""
+    source: str = "session"
+
+
+@dataclass
+class SessionEndEvent(Event):
+    """A Claude session ended."""
+
+    user_id: int = 0
+    session_id: str = ""
+    total_cost: float = 0.0
+    source: str = "session"
+
+
+@dataclass
+class TaskCreatedEvent(Event):
+    """A scheduled task was created."""
+
+    task_id: str = ""
+    task_name: str = ""
+    source: str = "scheduler"
+
+
+@dataclass
+class TaskCompletedEvent(Event):
+    """A scheduled task completed."""
+
+    task_id: str = ""
+    success: bool = True
+    error: Optional[str] = None
+    source: str = "scheduler"
