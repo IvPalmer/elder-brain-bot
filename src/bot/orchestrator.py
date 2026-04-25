@@ -276,19 +276,45 @@ class MessageOrchestrator:
         return None
 
     async def _reject_for_thread_mode(self, update: Update, message: str) -> None:
-        """Send a guidance response when strict thread routing rejects an update."""
+        """Send a guidance response when strict thread routing rejects an update.
+
+        All Telegram sends are wrapped — a failure here must not crash the
+        handler chain or leave the user without any response.
+        """
         query = update.callback_query
         if query:
             try:
                 await query.answer()
             except Exception:
-                pass
+                logger.debug("callback_query.answer failed in thread reject")
             if query.message:
-                await query.message.reply_text(message, parse_mode="HTML")
+                try:
+                    await query.message.reply_text(message, parse_mode="HTML")
+                except Exception as e:
+                    logger.warning(
+                        "Failed to send thread-mode rejection (callback)",
+                        error=str(e),
+                    )
+                    try:
+                        await query.message.reply_text(message)
+                    except Exception:
+                        logger.exception("Plain rejection also failed")
             return
 
         if update.effective_message:
-            await update.effective_message.reply_text(message, parse_mode="HTML")
+            try:
+                await update.effective_message.reply_text(
+                    message, parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to send thread-mode rejection (HTML)",
+                    error=str(e),
+                )
+                try:
+                    await update.effective_message.reply_text(message)
+                except Exception:
+                    logger.exception("Plain rejection also failed")
 
     def register_handlers(self, app: Application) -> None:
         """Register handlers based on mode."""
@@ -870,6 +896,70 @@ class MessageOrchestrator:
 
         return caption_sent
 
+    async def _send_text_with_fallback(
+        self,
+        update: Update,
+        text: str,
+        reply_to_message_id: Optional[int] = None,
+        initial_error: Optional[Exception] = None,
+        max_attempts: int = 3,
+    ) -> bool:
+        """Send plain text with retry/backoff.
+
+        Used when the primary HTML send already failed. We retry the plain
+        text path a few times to ride out transient network/Telegram errors
+        before giving up. On final failure we attempt one minimal apology
+        message; if that also fails it is logged but not re-raised.
+        Returns True if any send succeeded.
+        """
+        from telegram.error import RetryAfter, TimedOut, NetworkError
+
+        backoff = 1.0
+        last_error: Optional[Exception] = initial_error
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await update.message.reply_text(
+                    text,
+                    reply_markup=None,
+                    reply_to_message_id=reply_to_message_id,
+                )
+                return True
+            except RetryAfter as e:
+                wait = float(getattr(e, "retry_after", backoff)) + 0.5
+                last_error = e
+                await asyncio.sleep(wait)
+            except (TimedOut, NetworkError) as e:
+                last_error = e
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 8.0)
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Plain text send failed",
+                    error=str(e),
+                    attempt=attempt,
+                )
+                # Non-transient — break and try the apology fallback.
+                break
+
+        # Final apology — best effort, swallow any failure.
+        try:
+            await update.message.reply_text(
+                "\u26a0\ufe0f Failed to deliver response "
+                f"({str(last_error)[:120] if last_error else 'unknown error'}). "
+                "Please try again."
+            )
+        except Exception:
+            logger.exception(
+                "Apology message also failed",
+                user_id=(
+                    update.effective_user.id
+                    if update.effective_user
+                    else None
+                ),
+            )
+        return False
+
     async def agentic_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1072,23 +1162,14 @@ class MessageOrchestrator:
                             error=str(send_err),
                             message_index=i,
                         )
-                        try:
-                            await update.message.reply_text(
-                                message.text,
-                                reply_markup=None,
-                                reply_to_message_id=(
-                                    update.message.message_id if i == 0 else None
-                                ),
-                            )
-                        except Exception as plain_err:
-                            await update.message.reply_text(
-                                f"Failed to deliver response "
-                                f"(Telegram error: {str(plain_err)[:150]}). "
-                                f"Please try again.",
-                                reply_to_message_id=(
-                                    update.message.message_id if i == 0 else None
-                                ),
-                            )
+                        await self._send_text_with_fallback(
+                            update,
+                            message.text,
+                            reply_to_message_id=(
+                                update.message.message_id if i == 0 else None
+                            ),
+                            initial_error=send_err,
+                        )
 
                 # Send images separately if caption wasn't used
                 if images:
@@ -1100,6 +1181,13 @@ class MessageOrchestrator:
                         )
                     except Exception as img_err:
                         logger.warning("Image send failed", error=str(img_err))
+                        await self._send_text_with_fallback(
+                            update,
+                            f"\u26a0\ufe0f Could not deliver "
+                            f"{len(images)} image(s) "
+                            f"({str(img_err)[:120]}).",
+                            reply_to_message_id=update.message.message_id,
+                        )
 
         # Audit log
         audit_logger = context.bot_data.get("audit_logger")

@@ -54,11 +54,18 @@ class ClaudeCodeBot:
         builder.defaults(Defaults(do_quote=self.settings.reply_quote))
         builder.rate_limiter(AIORateLimiter(max_retries=1))
 
-        # Configure connection settings
-        builder.connect_timeout(30)
-        builder.read_timeout(30)
-        builder.write_timeout(30)
+        # Connection settings tuned for long-poll resilience.
+        # read_timeout must exceed Telegram's getUpdates long-poll window
+        # (we use ~30s server-side); otherwise the HTTP client kills the
+        # request before Telegram returns and we churn reconnects.
+        builder.connect_timeout(15)
+        builder.read_timeout(75)
+        builder.write_timeout(60)
         builder.pool_timeout(30)
+        builder.get_updates_connect_timeout(15)
+        builder.get_updates_read_timeout(75)
+        builder.get_updates_write_timeout(60)
+        builder.get_updates_pool_timeout(30)
 
         self.app = builder.build()
 
@@ -206,17 +213,44 @@ class ClaudeCodeBot:
                     allowed_updates=Update.ALL_TYPES,
                 )
             else:
-                # Polling mode - initialize and start polling manually
-                await self.app.initialize()
+                # Polling mode. The Application is already initialized in
+                # self.initialize(); just start it and the updater. If the
+                # updater dies (network blip, server reset), restart with
+                # exponential backoff instead of silently exiting.
                 await self.app.start()
-                await self.app.updater.start_polling(
-                    allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True,
-                )
 
-                # Keep running until manually stopped
+                backoff = 1.0
+                max_backoff = 60.0
                 while self.is_running:
-                    await asyncio.sleep(1)
+                    try:
+                        await self.app.updater.start_polling(
+                            allowed_updates=Update.ALL_TYPES,
+                            drop_pending_updates=True,
+                        )
+                        backoff = 1.0  # reset on successful (re)start
+                        while self.is_running and self.app.updater.running:
+                            await asyncio.sleep(1)
+                        if not self.is_running:
+                            break
+                        logger.warning(
+                            "Polling updater stopped unexpectedly, restarting",
+                            backoff_seconds=backoff,
+                        )
+                    except Exception as poll_err:
+                        logger.error(
+                            "Polling failed, restarting with backoff",
+                            error=str(poll_err),
+                            backoff_seconds=backoff,
+                        )
+                        # Ensure updater is stopped before retrying.
+                        try:
+                            if self.app.updater.running:
+                                await self.app.updater.stop()
+                        except Exception:
+                            logger.debug("Updater stop during recovery failed")
+
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, max_backoff)
         except Exception as e:
             logger.error("Error running bot", error=str(e))
             raise ClaudeCodeTelegramError(f"Failed to start bot: {str(e)}") from e

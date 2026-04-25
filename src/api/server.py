@@ -90,21 +90,55 @@ def create_api_app(
             event_type_name = request.headers.get("X-Event-Type", "unknown")
             delivery_id = request.headers.get("X-Delivery-ID", str(uuid.uuid4()))
 
-        # Parse payload — try JSON first, then form-encoded
+        # Parse payload — try JSON first, then form-encoded.
+        # Empty bodies are allowed (some providers send signal-only events).
+        # Malformed JSON when content-type announces JSON is a real client
+        # bug and must be rejected with 400 — silently storing raw_body
+        # masked downstream parsing failures.
         content_type = request.headers.get("content-type", "")
-        try:
-            if "application/x-www-form-urlencoded" in content_type:
-                from urllib.parse import parse_qs, unquote
+        payload: Dict[str, Any]
+        if not body:
+            payload = {}
+        elif "application/x-www-form-urlencoded" in content_type:
+            from urllib.parse import parse_qs
 
+            try:
                 decoded = body.decode("utf-8", errors="replace")
                 parsed = parse_qs(decoded, keep_blank_values=True)
-                payload: Dict[str, Any] = {
+                payload = {
                     k: v[0] if len(v) == 1 else v for k, v in parsed.items()
                 }
-            else:
+            except Exception as e:
+                logger.warning(
+                    "Failed to parse form-encoded webhook body",
+                    provider=provider,
+                    error=str(e),
+                )
+                raise HTTPException(
+                    status_code=400, detail="Malformed form-encoded body"
+                )
+        elif "application/json" in content_type or content_type == "":
+            try:
                 payload = await request.json()
-        except Exception:
-            payload = {"raw_body": body.decode("utf-8", errors="replace")[:5000]}
+            except Exception as e:
+                logger.warning(
+                    "Failed to parse JSON webhook body",
+                    provider=provider,
+                    content_type=content_type,
+                    error=str(e),
+                )
+                raise HTTPException(
+                    status_code=400, detail="Malformed JSON body"
+                )
+            if not isinstance(payload, dict):
+                payload = {"value": payload}
+        else:
+            # Unknown content type — preserve raw body for debugging but
+            # tag it explicitly so handlers can filter.
+            payload = {
+                "_raw_body": body.decode("utf-8", errors="replace")[:5000],
+                "_content_type": content_type,
+            }
 
         # Atomic dedupe: attempt INSERT first, only publish if new
         if db_manager and delivery_id:

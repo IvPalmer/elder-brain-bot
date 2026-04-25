@@ -10,7 +10,14 @@ from typing import List, Optional
 import structlog
 from telegram import Bot
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import (
+    BadRequest,
+    Forbidden,
+    NetworkError,
+    RetryAfter,
+    TelegramError,
+    TimedOut,
+)
 
 from ..events.bus import Event, EventBus
 from ..events.types import AgentResponseEvent
@@ -19,6 +26,11 @@ logger = structlog.get_logger()
 
 # Telegram rate limit: ~30 msgs/sec globally, ~1 msg/sec per chat
 SEND_INTERVAL_SECONDS = 1.1
+
+# Retry config for transient send failures
+MAX_SEND_ATTEMPTS = 4
+RETRY_INITIAL_BACKOFF = 2.0
+RETRY_MAX_BACKOFF = 30.0
 
 
 class NotificationService:
@@ -102,17 +114,13 @@ class NotificationService:
         if wait_time > 0:
             await asyncio.sleep(wait_time)
 
-        try:
-            # Split long messages (Telegram limit: 4096 chars)
-            text = event.text
-            chunks = self._split_message(text)
+        text = event.text
+        chunks = self._split_message(text)
+        parse_mode = ParseMode.HTML if event.parse_mode == "HTML" else None
 
+        try:
             for chunk in chunks:
-                await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=chunk,
-                    parse_mode=(ParseMode.HTML if event.parse_mode == "HTML" else None),
-                )
+                await self._send_with_retry(chat_id, chunk, parse_mode)
                 self._last_send_per_chat[chat_id] = asyncio.get_event_loop().time()
 
                 # Rate limit between chunks too
@@ -134,7 +142,7 @@ class NotificationService:
                 )
         except TelegramError as e:
             logger.error(
-                "Failed to send notification",
+                "Failed to send notification after retries",
                 chat_id=chat_id,
                 error=str(e),
                 event_id=event.id,
@@ -145,6 +153,70 @@ class NotificationService:
                 self.delivery_tracker.record_failed(
                     event_id=event.id, chat_id=chat_id, error=str(e)
                 )
+
+    async def _send_with_retry(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: Optional[ParseMode],
+    ) -> None:
+        """Send a single chunk with exponential backoff for transient errors.
+
+        Retries on RetryAfter (429), TimedOut, NetworkError. Falls back to
+        plain text on HTML parse errors. Forbidden / BadRequest (non-parse)
+        are non-retryable.
+        """
+        backoff = RETRY_INITIAL_BACKOFF
+        attempt_parse_mode = parse_mode
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
+            try:
+                await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=attempt_parse_mode,
+                )
+                return
+            except RetryAfter as e:
+                wait = float(getattr(e, "retry_after", backoff)) + 0.5
+                logger.warning(
+                    "Telegram RetryAfter, sleeping",
+                    chat_id=chat_id,
+                    seconds=wait,
+                    attempt=attempt,
+                )
+                await asyncio.sleep(wait)
+                last_error = e
+            except (TimedOut, NetworkError) as e:
+                logger.warning(
+                    "Transient Telegram send error, backing off",
+                    chat_id=chat_id,
+                    error=str(e),
+                    attempt=attempt,
+                    backoff=backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, RETRY_MAX_BACKOFF)
+                last_error = e
+            except BadRequest as e:
+                # If HTML parsing fails, retry once as plain text.
+                if attempt_parse_mode is not None and "parse" in str(e).lower():
+                    logger.warning(
+                        "HTML parse failed, retrying as plain text",
+                        chat_id=chat_id,
+                        error=str(e),
+                    )
+                    attempt_parse_mode = None
+                    last_error = e
+                    continue
+                raise
+            except Forbidden:
+                # User blocked the bot or chat unavailable — don't retry.
+                raise
+
+        if last_error is not None:
+            raise last_error
 
     def _split_message(self, text: str, max_length: int = 4096) -> List[str]:
         """Split long messages at paragraph boundaries."""
