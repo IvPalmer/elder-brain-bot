@@ -1,21 +1,33 @@
-# VPS deploy — plain compose under /home/ubuntu/claude-assistant/.
+# VPS deploy — plain compose under /home/ubuntu/elder-brain-bot/.
 # Matches the trade-webhook pattern (services/trade-webhook in elder-brain).
 #
-# Auth bootstrap (one-time, before `up -d`):
-#   docker compose run --rm bot claude login
-# That writes credentials into the claude_auth named volume; persists
-# across rebuilds.
+# Naming note: the source repo is `claude-assistant` (fork of
+# RichardAtCT/claude-code-telegram, a generic Telegram bot framework).
+# The deployed identity here is `elder-brain-bot` — the Telegram bot
+# `@elder_brain_bot`, the container, the dir, the secrets path. The
+# named volumes still carry the old `claude-assistant_*` prefix
+# (declared external below) so we don't have to migrate auth state
+# every time we rename.
 #
-# Secrets live in /etc/claude-assistant/.env (chmod 600, not in git).
+# Auth bootstrap (one-time, before `up -d`):
+#   docker compose run --rm bot claude
+#   /login   (inside the resulting Claude Code session)
+# That writes credentials into the claude-assistant_claude_auth volume;
+# persists across rebuilds.
+#
+# Secrets live in /etc/elder-brain-bot/.env (chmod 600, ubuntu:ubuntu —
+# NOT root, otherwise compose env_file fails with permission denied).
+
+name: elder-brain-bot
 
 services:
   bot:
     build: .
-    image: claude-assistant:local
-    container_name: claude-assistant
+    image: elder-brain-bot:local
+    container_name: elder-brain-bot
     restart: unless-stopped
     env_file:
-      - /etc/claude-assistant/.env
+      - /etc/elder-brain-bot/.env
     environment:
       APPROVED_DIRECTORY: /home/ubuntu
       DATABASE_URL: sqlite:///data/bot.db
@@ -42,7 +54,11 @@ services:
 
 volumes:
   claude_auth:
+    external: true
+    name: claude-assistant_claude_auth
   claude_data:
+    external: true
+    name: claude-assistant_claude_data
 
 networks:
   dokploy-network:
