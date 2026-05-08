@@ -29,7 +29,12 @@ services:
     env_file:
       - /etc/elder-brain-bot/.env
     environment:
-      APPROVED_DIRECTORY: /home/ubuntu
+      # Bot's "approved working surface". Set to / so the bot can operate on
+      # any project, whether it lives under /home/ubuntu (plain compose) or
+      # /etc/dokploy (Dokploy-managed app/compose source clones). Container
+      # is isolated; APPROVED_DIRECTORY just gates which paths the bot will
+      # accept user commands against.
+      APPROVED_DIRECTORY: /
       DATABASE_URL: sqlite:///data/bot.db
       API_SERVER_PORT: 8088
       ENVIRONMENT: production
@@ -37,8 +42,19 @@ services:
     volumes:
       - claude_auth:/root/.claude
       - claude_data:/app/data
+      # Knowledge substrate.
       - /srv/lake:/srv/lake:rw
+      # Plain-compose projects (crate-mate, dsrptv, master-trader, ocdj,
+      # trade-webhook, veludo, elder-brain itself — all live here).
       - /home/ubuntu:/home/ubuntu:rw
+      # Dokploy-managed app + compose source clones (ddd, disclaymer,
+      # health, joberator, master-trader-stack, rlm-stack, vault-stack).
+      # Without this mount the bot can't read or edit those projects.
+      - /etc/dokploy:/etc/dokploy:rw
+      # Docker socket — lets the bot run `docker compose`, restart
+      # containers, build images, etc. directly. Unrestricted host control;
+      # OK because this VPS runs only my own services.
+      - /var/run/docker.sock:/var/run/docker.sock:rw
     networks:
       - dokploy-network
     deploy:
