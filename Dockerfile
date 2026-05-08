@@ -32,6 +32,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN npm install -g @anthropic-ai/claude-code@2.1.123
 
+# Bot runs as root; bind-mounted host repos are owned by ubuntu (uid 1001).
+# Without this, git refuses with "dubious ownership". Bot needs to read +
+# write any repo on the host, so allow all paths.
+RUN git config --system --add safe.directory '*'
+
 RUN pip install poetry==2.1.3
 
 WORKDIR /app
