@@ -16,6 +16,7 @@ from .git_integration import GitIntegration
 from .image_handler import ImageHandler
 from .quick_actions import QuickActionManager
 from .session_export import SessionExporter
+from .tts_handler import TTSConfig, TTSHandler
 from .voice_handler import VoiceHandler
 
 logger = structlog.get_logger(__name__)
@@ -78,16 +79,40 @@ class FeatureRegistry:
         except Exception as e:
             logger.error("Failed to initialize image handler", error=str(e))
 
-        # Voice transcription - requires provider-specific API key
+        # Voice transcription - local needs no API key, others need provider key
         voice_key_available = (
+            self.config.voice_provider == "local"
+        ) or (
             self.config.voice_provider == "openai" and self.config.openai_api_key
-        ) or (self.config.voice_provider == "mistral" and self.config.mistral_api_key)
+        ) or (
+            self.config.voice_provider == "mistral" and self.config.mistral_api_key
+        )
         if self.config.enable_voice_messages and voice_key_available:
             try:
                 self.features["voice_handler"] = VoiceHandler(config=self.config)
-                logger.info("Voice handler feature enabled")
+                logger.info(
+                    "Voice handler feature enabled",
+                    provider=self.config.voice_provider,
+                )
             except Exception as e:
                 logger.error("Failed to initialize voice handler", error=str(e))
+
+        # TTS voice replies
+        if self.config.enable_voice_replies:
+            try:
+                tts_config = TTSConfig(
+                    enabled=True,
+                    voice=self.config.tts_voice,
+                    rate=self.config.tts_rate,
+                    pitch=self.config.tts_pitch,
+                    max_chars=self.config.tts_max_chars,
+                    base_url=getattr(self.config, "tts_base_url", "http://localhost:8880/v1"),
+                    model=getattr(self.config, "tts_model", "kokoro"),
+                )
+                self.features["tts_handler"] = TTSHandler(config=tts_config)
+                logger.info("TTS voice reply feature enabled", voice=tts_config.voice)
+            except Exception as e:
+                logger.error("Failed to initialize TTS handler", error=str(e))
 
         # Conversation enhancements - skip in agentic mode
         if not self.config.agentic_mode:
@@ -133,6 +158,10 @@ class FeatureRegistry:
     def get_voice_handler(self) -> Optional[VoiceHandler]:
         """Get voice handler feature"""
         return self.get_feature("voice_handler")
+
+    def get_tts_handler(self) -> Optional[TTSHandler]:
+        """Get TTS handler feature"""
+        return self.get_feature("tts_handler")
 
     def get_conversation_enhancer(self) -> Optional[ConversationEnhancer]:
         """Get conversation enhancer feature"""

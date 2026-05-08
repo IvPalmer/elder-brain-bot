@@ -1,7 +1,10 @@
-"""Handle voice message transcription via Mistral (Voxtral) or OpenAI (Whisper)."""
+"""Handle voice message transcription via local Whisper, Mistral, or OpenAI."""
 
+import asyncio
+import tempfile
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Optional
 
 import structlog
@@ -79,7 +82,9 @@ class VoiceHandler:
             file_size=initial_file_size or resolved_file_size or len(voice_bytes),
         )
 
-        if self.config.voice_provider == "openai":
+        if self.config.voice_provider == "local":
+            transcription = await self._transcribe_local(voice_bytes)
+        elif self.config.voice_provider == "openai":
             transcription = await self._transcribe_openai(voice_bytes)
         else:
             transcription = await self._transcribe_mistral(voice_bytes)
@@ -187,3 +192,57 @@ class VoiceHandler:
 
         self._openai_client = AsyncOpenAI(api_key=api_key)
         return self._openai_client
+
+    async def _transcribe_local(self, voice_bytes: bytes) -> str:
+        """Transcribe audio using locally installed Whisper CLI."""
+        tmp_ogg = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False)
+        tmp_ogg.write(voice_bytes)
+        tmp_ogg.close()
+
+        try:
+            model = self.config.resolved_voice_model
+            cmd = [
+                "whisper",
+                tmp_ogg.name,
+                "--model",
+                model,
+                "--language",
+                "pt",
+                "--output_format",
+                "txt",
+                "--output_dir",
+                str(Path(tmp_ogg.name).parent),
+                "--initial_prompt",
+                "Conversa informal em português brasileiro entre amigos.",
+            ]
+
+            logger.info("Running local Whisper", model=model)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+
+            if proc.returncode != 0:
+                logger.warning(
+                    "Local Whisper failed",
+                    returncode=proc.returncode,
+                    stderr=stderr.decode()[:500],
+                )
+                raise RuntimeError("Local Whisper transcription failed.")
+
+            # Whisper outputs <filename>.txt
+            txt_path = Path(tmp_ogg.name).with_suffix(".txt")
+            if not txt_path.exists():
+                raise RuntimeError("Whisper did not produce output file.")
+
+            text = txt_path.read_text().strip()
+            txt_path.unlink(missing_ok=True)
+
+            if not text:
+                raise ValueError("Local Whisper returned empty transcription.")
+
+            return text
+        finally:
+            Path(tmp_ogg.name).unlink(missing_ok=True)

@@ -16,12 +16,19 @@ from src.claude import (
     ClaudeIntegration,
     SessionManager,
 )
+from src.bot.features.skills import SkillLoader
+from src.claude.coordinator import CoordinatorManager
+from src.claude.memory import MemoryStore
 from src.claude.sdk_integration import ClaudeSDKManager
 from src.config.features import FeatureFlags
 from src.config.settings import Settings
 from src.events.bus import EventBus
 from src.events.handlers import AgentHandler, FreqtradeHandler
+from src.events.hooks import HookRegistry
 from src.events.middleware import EventSecurityMiddleware
+from src.events.retry import DeadLetterQueue
+from src.notifications.tracking import DeliveryTracker
+from src.security.tool_acl import ToolACLManager
 from src.exceptions import ConfigurationError
 from src.notifications.service import NotificationService
 from src.projects import ProjectThreadManager, load_project_registry
@@ -142,16 +149,41 @@ async def create_application(config: Settings) -> Dict[str, Any]:
 
     # Create Claude SDK manager and integration facade
     logger.info("Using Claude Python SDK integration")
-    sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
+    tool_acl = ToolACLManager()
+    sdk_manager = ClaudeSDKManager(
+        config, security_validator=security_validator, tool_acl=tool_acl
+    )
+
+    memory_store = MemoryStore(base_dir=config.memory_dir)
+    logger.info("Memory store initialized", base_dir=str(config.memory_dir))
 
     claude_integration = ClaudeIntegration(
         config=config,
         sdk_manager=sdk_manager,
         session_manager=session_manager,
+        memory_store=memory_store,
     )
 
     # --- Event bus and agentic platform components ---
     event_bus = EventBus()
+
+    # Dead-letter queue for failed events
+    dlq = DeadLetterQueue()
+    event_bus.set_dlq(dlq)
+
+    # Pre/post event hooks
+    hooks = HookRegistry()
+    event_bus.set_hooks(hooks)
+
+    # Coordinator for parallel Claude workers
+    coordinator = CoordinatorManager(
+        claude=claude_integration,
+        event_bus=event_bus,
+    )
+
+    # Skill templates
+    skill_loader = SkillLoader(skills_dir=config.skills_dir)
+    skill_loader.load_all()
 
     # Event security middleware
     event_security = EventSecurityMiddleware(
@@ -181,6 +213,9 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "rate_limiter": rate_limiter,
         "audit_logger": audit_logger,
         "claude_integration": claude_integration,
+        "memory_store": memory_store,
+        "coordinator": coordinator,
+        "skill_loader": skill_loader,
         "storage": storage,
         "event_bus": event_bus,
         "project_registry": None,
@@ -347,6 +382,7 @@ async def run_application(app: Dict[str, Any]) -> None:
             bot=telegram_bot,
             default_chat_ids=config.notification_chat_ids or [],
         )
+        notification_service.delivery_tracker = DeliveryTracker()
         notification_service.register()
         await notification_service.start()
 

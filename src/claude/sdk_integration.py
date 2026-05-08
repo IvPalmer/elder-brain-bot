@@ -3,6 +3,7 @@
 import asyncio
 import os
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -29,7 +30,9 @@ from claude_agent_sdk._internal.message_parser import parse_message
 from claude_agent_sdk.types import StreamEvent
 
 from ..config.settings import Settings
+from ..security.tool_acl import ToolACLManager
 from ..security.validators import SecurityValidator
+from .error_types import classify_error
 from .exceptions import (
     ClaudeMCPError,
     ClaudeParsingError,
@@ -84,11 +87,14 @@ def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
     approved_directory: Path,
+    tool_acl: Optional[ToolACLManager] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
 ) -> Any:
     """Create a can_use_tool callback for SDK-level tool permission validation.
 
-    The callback validates file path boundaries and bash directory boundaries
-    *before* the SDK executes the tool, providing preventive security enforcement.
+    The callback validates file path boundaries, bash directory boundaries,
+    and per-tool ACLs *before* the SDK executes the tool.
     """
     _FILE_TOOLS = {"Write", "Edit", "Read", "create_file", "edit_file", "read_file"}
     _BASH_TOOLS = {"Bash", "bash", "shell"}
@@ -98,6 +104,18 @@ def _make_can_use_tool_callback(
         tool_input: Dict[str, Any],
         context: ToolPermissionContext,
     ) -> Any:
+        # Per-tool ACL check
+        if tool_acl and user_id is not None:
+            allowed, reason = tool_acl.check(tool_name, user_id, session_id)
+            if not allowed:
+                logger.warning(
+                    "can_use_tool denied by ACL",
+                    tool_name=tool_name,
+                    user_id=user_id,
+                    reason=reason,
+                )
+                return PermissionResultDeny(message=reason)
+
         # File path validation
         if tool_name in _FILE_TOOLS:
             file_path = tool_input.get("file_path") or tool_input.get("path")
@@ -136,24 +154,13 @@ def _make_can_use_tool_callback(
                         message=error or "Bash directory boundary violation"
                     )
 
+        # Record tool use for session-based ACL limits
+        if tool_acl and session_id:
+            tool_acl.record_use(session_id, tool_name)
+
         return PermissionResultAllow()
 
     return can_use_tool
-
-
-def filter_denied_tools(
-    allowed_tools: list[str],
-    disallowed_tools: list[str] | None,
-) -> list[str]:
-    """Remove disallowed tools before sending to Claude (saves tokens).
-
-    Inspired by Claude Code's filterToolsByDenyRules() which removes tools
-    before the model sees them, not just at call time.
-    """
-    if not disallowed_tools:
-        return list(allowed_tools)
-    deny_set = set(disallowed_tools)
-    return [t for t in allowed_tools if t not in deny_set]
 
 
 class ClaudeSDKManager:
@@ -163,10 +170,12 @@ class ClaudeSDKManager:
         self,
         config: Settings,
         security_validator: Optional[SecurityValidator] = None,
+        tool_acl: Optional[ToolACLManager] = None,
     ):
         """Initialize SDK manager with configuration."""
         self.config = config
         self.security_validator = security_validator
+        self.tool_acl = tool_acl
 
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
@@ -183,6 +192,8 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        system_prompt_extra: str = "",
+        user_id: Optional[int] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -215,6 +226,10 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
+            # Append per-user memory context
+            if system_prompt_extra:
+                base_prompt += "\n\n" + system_prompt_extra
+
             # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
             # tools so the SDK does not restrict tool usage (e.g. MCP tools).
             if self.config.disable_tool_validation:
@@ -243,7 +258,7 @@ class ClaudeSDKManager:
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
-                setting_sources=["user", "project"],
+                setting_sources=["project"],
                 stderr=_stderr_callback,
             )
 
@@ -261,6 +276,9 @@ class ClaudeSDKManager:
                     security_validator=self.security_validator,
                     working_directory=working_directory,
                     approved_directory=self.config.approved_directory,
+                    tool_acl=self.tool_acl,
+                    user_id=user_id,
+                    session_id=session_id,
                 )
 
             # Resume previous session if we have a session_id
@@ -328,8 +346,11 @@ class ClaudeSDKManager:
             )
 
             # Extract cost, tools, and session_id from result message
+            from .tool_execution import ToolExecution, ToolExecutionTracker
+
             cost = 0.0
             tools_used: List[Dict[str, Any]] = []
+            tracker = ToolExecutionTracker()
             claude_session_id = None
             result_content = None
             for message in messages:
@@ -344,14 +365,23 @@ class ClaudeSDKManager:
                             if msg_content and isinstance(msg_content, list):
                                 for block in msg_content:
                                     if isinstance(block, ToolUseBlock):
+                                        tool_name = getattr(
+                                            block, "name", "unknown"
+                                        )
                                         tools_used.append(
                                             {
-                                                "name": getattr(
-                                                    block, "name", "unknown"
-                                                ),
+                                                "name": tool_name,
                                                 "timestamp": current_time,
                                                 "input": getattr(block, "input", {}),
                                             }
+                                        )
+                                        tracker.record(
+                                            ToolExecution(
+                                                tool_name=tool_name,
+                                                start_time=datetime.now(UTC),
+                                                duration_ms=0,  # not available post-hoc
+                                                success=True,
+                                            )
                                         )
                     break
 
@@ -396,6 +426,16 @@ class ClaudeSDKManager:
                         elif msg_content:
                             content_parts.append(str(msg_content))
                 content = "\n".join(content_parts)
+
+            # Log tool execution summary
+            tool_summary = tracker.summarize()
+            if tool_summary["total_executions"] > 0:
+                logger.info(
+                    "Tool execution summary",
+                    total=tool_summary["total_executions"],
+                    success_rate=tool_summary["success_rate"],
+                    tools={k: v["count"] for k, v in tool_summary["by_tool"].items()},
+                )
 
             return ClaudeResponse(
                 content=content,

@@ -2,6 +2,7 @@
 
 from .conversation_mode import ConversationContext, ConversationEnhancer
 from .file_handler import CodebaseAnalysis, FileHandler, ProcessedFile
+from .tts_handler import TTSConfig, TTSHandler
 from .voice_handler import ProcessedVoice, VoiceHandler
 
 __all__ = [
@@ -12,4 +13,6 @@ __all__ = [
     "ConversationContext",
     "VoiceHandler",
     "ProcessedVoice",
+    "TTSHandler",
+    "TTSConfig",
 ]

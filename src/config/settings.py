@@ -159,6 +159,16 @@ class Settings(BaseSettings):
         DEFAULT_MAX_SESSIONS_PER_USER, description="Max concurrent sessions"
     )
 
+    # Memory
+    memory_dir: Path = Field(
+        Path("data/memories"),
+        description="Directory for per-user memory files",
+    )
+    skills_dir: Path = Field(
+        Path("skills"),
+        description="Directory for skill markdown templates",
+    )
+
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
     mcp_config_path: Optional[Path] = Field(
@@ -169,9 +179,9 @@ class Settings(BaseSettings):
     enable_voice_messages: bool = Field(
         True, description="Enable voice message transcription"
     )
-    voice_provider: Literal["mistral", "openai"] = Field(
+    voice_provider: Literal["mistral", "openai", "local"] = Field(
         "mistral",
-        description="Voice transcription provider: 'mistral' or 'openai'",
+        description="Voice transcription provider: 'mistral', 'openai', or 'local' (Whisper CLI)",
     )
     mistral_api_key: Optional[SecretStr] = Field(
         None, description="Mistral API key for voice transcription"
@@ -194,6 +204,28 @@ class Settings(BaseSettings):
         ),
         ge=1,
         le=200,
+    )
+
+    # TTS (voice replies)
+    enable_voice_replies: bool = Field(
+        False, description="Reply to voice messages with audio (Kokoro TTS)"
+    )
+    tts_voice: str = Field(
+        "af_sky",
+        description="Kokoro TTS voice name",
+    )
+    tts_rate: str = Field("-5%", description="TTS speech rate adjustment (legacy)")
+    tts_pitch: str = Field("-3%", description="TTS pitch adjustment (legacy)")
+    tts_max_chars: int = Field(
+        4000, description="Max text length for TTS conversion"
+    )
+    tts_base_url: str = Field(
+        "http://localhost:8880/v1",
+        description="Kokoro TTS API base URL",
+    )
+    tts_model: str = Field(
+        "kokoro",
+        description="Kokoro TTS model name",
     )
     enable_quick_actions: bool = Field(True, description="Enable quick action buttons")
     agentic_mode: bool = Field(
@@ -301,7 +333,7 @@ class Settings(BaseSettings):
             return [int(uid) for uid in v]
         return v  # type: ignore[no-any-return]
 
-    @field_validator("claude_allowed_tools", mode="before")
+    @field_validator("claude_allowed_tools", "claude_disallowed_tools", mode="before")
     @classmethod
     def parse_claude_allowed_tools(cls, v: Any) -> Optional[List[str]]:
         """Parse comma-separated tool names."""
@@ -395,8 +427,10 @@ class Settings(BaseSettings):
         if v is None:
             return "mistral"
         provider = str(v).strip().lower()
-        if provider not in {"mistral", "openai"}:
-            raise ValueError("voice_provider must be one of ['mistral', 'openai']")
+        if provider not in {"mistral", "openai", "local"}:
+            raise ValueError(
+                "voice_provider must be one of ['mistral', 'openai', 'local']"
+            )
         return provider
 
     @field_validator("project_threads_chat_id", mode="before")
@@ -513,6 +547,8 @@ class Settings(BaseSettings):
     @property
     def voice_provider_api_key_env(self) -> str:
         """API key environment variable required for the configured voice provider."""
+        if self.voice_provider == "local":
+            return "(none — local Whisper CLI)"
         if self.voice_provider == "openai":
             return "OPENAI_API_KEY"
         return "MISTRAL_API_KEY"
@@ -520,6 +556,8 @@ class Settings(BaseSettings):
     @property
     def voice_provider_display_name(self) -> str:
         """Human-friendly label for the configured voice provider."""
+        if self.voice_provider == "local":
+            return "Local Whisper CLI"
         if self.voice_provider == "openai":
             return "OpenAI Whisper"
         return "Mistral Voxtral"

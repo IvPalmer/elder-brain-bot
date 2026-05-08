@@ -147,3 +147,5 @@ sessions/
 backups/
 uploads/
 config/mcp.json
+
+.claude/

@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from ..config.settings import Settings
+from .error_types import ErrorCategory, classify_error, is_transient_error
+from .memory import MemoryStore
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
 
@@ -36,11 +38,13 @@ class ClaudeIntegration:
         config: Settings,
         sdk_manager: Optional[ClaudeSDKManager] = None,
         session_manager: Optional[SessionManager] = None,
+        memory_store: Optional[MemoryStore] = None,
     ):
         """Initialize Claude integration facade."""
         self.config = config
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
+        self.memory_store = memory_store
 
     async def run_command(
         self,
@@ -82,6 +86,11 @@ class ClaudeIntegration:
             user_id, working_directory, session_id
         )
 
+        # Build per-user memory context for the system prompt
+        memory_prompt = ""
+        if self.memory_store:
+            memory_prompt = self.memory_store.build_memory_prompt(user_id)
+
         # Execute command
         try:
             # Continue session if we have an existing session with a real ID
@@ -98,6 +107,8 @@ class ClaudeIntegration:
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=on_stream,
+                    system_prompt_extra=memory_prompt,
+                    user_id=user_id,
                 )
             except Exception as resume_error:
                 # If resume failed, retry as a fresh session but preserve the
@@ -105,18 +116,18 @@ class ClaudeIntegration:
                 # Only permanently remove sessions on definitive errors (e.g.
                 # "session not found"), not transient ones like timeouts.
                 if should_continue:
-                    from .exceptions import ClaudeTimeoutError
-
-                    is_transient = isinstance(resume_error, ClaudeTimeoutError)
+                    error_category = classify_error(resume_error)
+                    transient = is_transient_error(resume_error)
 
                     logger.warning(
                         "Session resume failed, starting fresh session",
                         failed_session_id=claude_session_id,
                         error=str(resume_error),
-                        transient=is_transient,
+                        error_category=error_category.value,
+                        transient=transient,
                     )
 
-                    if not is_transient:
+                    if not transient:
                         # Definitive failure — session is gone on Claude's side
                         await self.session_manager.remove_session(session.session_id)
 
@@ -130,6 +141,8 @@ class ClaudeIntegration:
                         session_id=None,
                         continue_session=False,
                         stream_callback=on_stream,
+                        system_prompt_extra=memory_prompt,
+                        user_id=user_id,
                     )
                 else:
                     raise
@@ -161,6 +174,8 @@ class ClaudeIntegration:
             logger.error(
                 "Claude command failed",
                 error=str(e),
+                error_category=classify_error(e).value,
+                transient=is_transient_error(e),
                 user_id=user_id,
                 session_id=session.session_id,
             )
@@ -173,6 +188,8 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
+        system_prompt_extra: str = "",
+        user_id: Optional[int] = None,
     ) -> ClaudeResponse:
         """Execute command via SDK."""
         return await self.sdk_manager.execute_command(
@@ -181,6 +198,8 @@ class ClaudeIntegration:
             session_id=session_id,
             continue_session=continue_session,
             stream_callback=stream_callback,
+            system_prompt_extra=system_prompt_extra,
+            user_id=user_id,
         )
 
     async def _find_resumable_session(
