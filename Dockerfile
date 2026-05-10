@@ -48,7 +48,14 @@ RUN poetry install --only main --no-root
 # src/bot/features/voice_handler.py when VOICE_PROVIDER=local.
 # Pulls torch (~1.5GB on aarch64) — kept out of poetry to make the
 # voice-extras toggle explicit at the image-layer level.
-RUN pip install --no-cache-dir openai-whisper==20240930
+#
+# openai-whisper still ships a setup.py that imports `pkg_resources`,
+# which setuptools 81+ removed. Pin setuptools<81 in build isolation
+# via PIP_CONSTRAINT so the build wheel step finds pkg_resources.
+RUN echo "setuptools<81" > /tmp/whisper-constraints.txt \
+ && PIP_CONSTRAINT=/tmp/whisper-constraints.txt \
+    pip install --no-cache-dir openai-whisper==20240930 \
+ && rm /tmp/whisper-constraints.txt
 
 COPY src/ ./src/
 COPY README.md ./
