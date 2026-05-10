@@ -45,23 +45,38 @@ RUN git config --system user.name  "elder-brain-bot" \
 
 # SSH state for root-in-container so `ssh git@github.com` (used by git
 # push) and other host-key-protected SSHs work without manual accept:
-#   - known_hosts pre-populated with github.com keys
+#   - known_hosts pinned to GitHub's published host keys (NOT ssh-keyscan,
+#     which is TOFU at build time and would bake in whatever the build
+#     host happens to receive). Source:
+#     https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
 #   - config maps github.com → identity at /home/ubuntu/.ssh/id_lake
 #     (bind-mounted from host; same key the ubuntu user uses, registered
-#     as an account SSH key on github.com/IvPalmer 2026-05-10).
-#   - IdentitiesOnly yes so ssh doesn't waste retries on absent defaults.
+#     as a github account SSH key for IvPalmer on 2026-05-10).
+#   - StrictHostKeyChecking yes for github since the key is now pinned.
+#   - Tailnet host alias `mac-studio` → 100.92.77.68 (Raphaels-Mac-Studio).
+#     Use a named alias instead of wildcarding the 100.64.0.0/10 CGNAT
+#     range so we don't paint id_lake at every tailnet host the bot
+#     might ever talk to. Add more Host blocks for other tailnet
+#     machines if the bot grows reach.
 RUN mkdir -p /root/.ssh \
  && chmod 700 /root/.ssh \
- && ssh-keyscan -t rsa,ecdsa,ed25519 github.com 2>/dev/null >> /root/.ssh/known_hosts \
+ && printf '%s\n' \
+        'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+        'github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=' \
+        'github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=' \
+        > /root/.ssh/known_hosts \
  && printf '%s\n' \
         'Host github.com' \
         '    HostName github.com' \
         '    User git' \
         '    IdentityFile /home/ubuntu/.ssh/id_lake' \
         '    IdentitiesOnly yes' \
-        '    StrictHostKeyChecking accept-new' \
+        '    StrictHostKeyChecking yes' \
+        '    UserKnownHostsFile /root/.ssh/known_hosts' \
         '' \
-        'Host *.tailscale.net 100.*' \
+        'Host mac-studio' \
+        '    HostName 100.92.77.68' \
+        '    User palmer' \
         '    IdentityFile /home/ubuntu/.ssh/id_lake' \
         '    IdentitiesOnly yes' \
         '    StrictHostKeyChecking accept-new' \
