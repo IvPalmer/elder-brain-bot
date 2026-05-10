@@ -42,7 +42,11 @@ RUN pip install poetry==2.1.3
 WORKDIR /app
 
 COPY pyproject.toml poetry.lock ./
-RUN poetry install --only main --no-root
+# `voice` extras pull in `openai` + `mistralai` — the openai pkg is what
+# tts_handler.py uses to talk to Kokoro's OpenAI-compatible /v1/audio/speech.
+# Without this, ENABLE_VOICE_REPLIES=true logs "openai is not installed"
+# and silently drops the audio reply.
+RUN poetry install --only main --no-root --extras voice
 
 # Voice (STT): openai-whisper provides the `whisper` CLI used by
 # src/bot/features/voice_handler.py when VOICE_PROVIDER=local.
