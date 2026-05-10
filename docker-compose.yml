@@ -1,13 +1,13 @@
 # VPS deploy — plain compose under /home/ubuntu/elder-brain-bot/.
 # Matches the trade-webhook pattern (services/trade-webhook in elder-brain).
 #
-# Naming note: the source repo is `claude-assistant` (fork of
-# RichardAtCT/claude-code-telegram, a generic Telegram bot framework).
-# The deployed identity here is `elder-brain-bot` — the Telegram bot
-# `@elder_brain_bot`, the container, the dir, the secrets path. The
-# named volumes still carry the old `claude-assistant_*` prefix
-# (declared external below) so we don't have to migrate auth state
-# every time we rename.
+# Naming note: the source repo is `IvPalmer/elder-brain-bot` (renamed
+# from `claude-assistant` on 2026-05-10; originally a fork of
+# RichardAtCT/claude-code-telegram). The deploy identity is
+# `elder-brain-bot` — Telegram bot `@elder_brain_bot`, the container,
+# the dir, the secrets path. The named volumes still carry the old
+# `claude-assistant_*` prefix (declared external below) so we don't
+# have to migrate auth state every time we rename.
 #
 # Auth bootstrap (one-time, before `up -d`):
 #   docker compose run --rm bot claude
@@ -42,6 +42,9 @@ services:
     volumes:
       - claude_auth:/root/.claude
       - claude_data:/app/data
+      # Whisper model cache — populated on first voice msg, persists
+      # across image rebuilds so we don't re-download ~500MB each time.
+      - whisper_models:/root/.cache/whisper
       # Knowledge substrate.
       - /srv/lake:/srv/lake:rw
       # Plain-compose projects (crate-mate, dsrptv, master-trader, ocdj,
@@ -60,7 +63,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          # Bumped from 1G → 2G: Whisper `small` transcription bursts
+          # to ~1.5GB peak when loading the model + decoding a clip.
+          memory: 2G
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/health', timeout=3).read()"]
       interval: 60s
@@ -75,6 +80,9 @@ volumes:
   claude_data:
     external: true
     name: claude-assistant_claude_data
+  whisper_models:
+    # Cache for openai-whisper model downloads (e.g. small.pt ~460MB).
+    # Compose creates this on first up; persists across rebuilds.
 
 networks:
   dokploy-network:

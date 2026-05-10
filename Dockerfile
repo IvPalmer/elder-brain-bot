@@ -17,7 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
 # + docker-ce-cli + compose plugin (bot runs `docker compose` against the
 # host socket bind-mounted at /var/run/docker.sock).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates gnupg git \
+        curl ca-certificates gnupg git ffmpeg \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg \
         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
@@ -44,10 +44,16 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock ./
 RUN poetry install --only main --no-root
 
+# Voice (STT): openai-whisper provides the `whisper` CLI used by
+# src/bot/features/voice_handler.py when VOICE_PROVIDER=local.
+# Pulls torch (~1.5GB on aarch64) — kept out of poetry to make the
+# voice-extras toggle explicit at the image-layer level.
+RUN pip install --no-cache-dir openai-whisper==20240930
+
 COPY src/ ./src/
 COPY README.md ./
 
-RUN mkdir -p /app/data /root/.claude
+RUN mkdir -p /app/data /root/.claude /root/.cache/whisper
 
 EXPOSE 8088
 
