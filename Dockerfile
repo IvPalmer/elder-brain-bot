@@ -37,6 +37,37 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.123
 # write any repo on the host, so allow all paths.
 RUN git config --system --add safe.directory '*'
 
+# Git identity for `git commit` from inside the bot. Without a user.name +
+# user.email anywhere, commit aborts. Bot commits show up authored by the
+# bot identity; Co-Authored-By the user in the actual Claude session.
+RUN git config --system user.name  "elder-brain-bot" \
+ && git config --system user.email "bot@grooveops.dev"
+
+# SSH state for root-in-container so `ssh git@github.com` (used by git
+# push) and other host-key-protected SSHs work without manual accept:
+#   - known_hosts pre-populated with github.com keys
+#   - config maps github.com → identity at /home/ubuntu/.ssh/id_lake
+#     (bind-mounted from host; same key the ubuntu user uses, registered
+#     as an account SSH key on github.com/IvPalmer 2026-05-10).
+#   - IdentitiesOnly yes so ssh doesn't waste retries on absent defaults.
+RUN mkdir -p /root/.ssh \
+ && chmod 700 /root/.ssh \
+ && ssh-keyscan -t rsa,ecdsa,ed25519 github.com 2>/dev/null >> /root/.ssh/known_hosts \
+ && printf '%s\n' \
+        'Host github.com' \
+        '    HostName github.com' \
+        '    User git' \
+        '    IdentityFile /home/ubuntu/.ssh/id_lake' \
+        '    IdentitiesOnly yes' \
+        '    StrictHostKeyChecking accept-new' \
+        '' \
+        'Host *.tailscale.net 100.*' \
+        '    IdentityFile /home/ubuntu/.ssh/id_lake' \
+        '    IdentitiesOnly yes' \
+        '    StrictHostKeyChecking accept-new' \
+    > /root/.ssh/config \
+ && chmod 600 /root/.ssh/config /root/.ssh/known_hosts
+
 RUN pip install poetry==2.1.3
 
 WORKDIR /app
