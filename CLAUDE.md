@@ -6,6 +6,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Telegram bot providing remote access to Claude Code. Python 3.10+, built with Poetry, using `python-telegram-bot` for Telegram and `claude-agent-sdk` for Claude Code integration.
 
+## Self-configuration protocol (production VPS)
+
+On the production VPS, the bot has `/etc/elder-brain-bot/` mounted rw, so it can edit its own env (`.env`) and restart itself. **Use this protocol so a bad edit doesn't permanently kill the bot:**
+
+```bash
+# 1. Save current as known-good (skip if /etc/elder-brain-bot/.env.last-good already up-to-date)
+cp /etc/elder-brain-bot/.env /etc/elder-brain-bot/.env.last-good
+
+# 2. Make the edit (e.g. change TTS_VOICE)
+sed -i 's/^TTS_VOICE=.*/TTS_VOICE=pf_dora/' /etc/elder-brain-bot/.env
+
+# 3. Apply by recreating the container
+cd /home/ubuntu/elder-brain-bot && docker compose up -d
+```
+
+**Watchdog (host-side, runs every 2 min via `/etc/cron.d/bot-env-watchdog`):**
+If the bot stays unhealthy and `.env.last-good` differs from `.env`, the watchdog restores `.env.last-good`, recreates the container, and pings Telegram with `⚠️ bot-env-watchdog: restored ...`. Log at `/var/log/lake/bot-watchdog.log`. Script at `/usr/local/bin/bot-env-watchdog`.
+
+**Whitelist of env keys safe for self-edit** (don't touch others without operator approval):
+`TTS_VOICE`, `TTS_RATE`, `TTS_PITCH`, `TTS_MAX_CHARS`, `TTS_MODEL`, `ENABLE_VOICE_REPLIES`, `ENABLE_VOICE_MESSAGES`, `VOICE_PROVIDER`, `VOICE_TRANSCRIPTION_MODEL`, `LOG_LEVEL`, `CLAUDE_MAX_TURNS`.
+
+**Never self-edit:** `TELEGRAM_BOT_TOKEN`, `*_API_KEY`, `APPROVED_DIRECTORY`, `DATABASE_URL`, `AUTH_*`. These require operator intent.
+
 ## Commands
 
 ```bash
