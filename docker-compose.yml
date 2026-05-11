@@ -54,6 +54,12 @@ services:
       # health, joberator, master-trader-stack, rlm-stack, vault-stack).
       # Without this mount the bot can't read or edit those projects.
       - /etc/dokploy:/etc/dokploy:rw
+      # Bot's own env file — so the bot can self-configure (e.g. change
+      # TTS_VOICE, flip feature flags) and then `docker compose up -d`
+      # itself to apply. Without this mount, the bot can read its own
+      # source + the compose file but not the secrets/runtime config,
+      # which made self-modification a dead-end.
+      - /etc/elder-brain-bot:/etc/elder-brain-bot:rw
       # Docker socket — lets the bot run `docker compose`, restart
       # containers, build images, etc. directly. Unrestricted host control;
       # OK because this VPS runs only my own services.
