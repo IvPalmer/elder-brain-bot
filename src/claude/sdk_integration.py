@@ -219,7 +219,16 @@ class ClaudeSDKManager:
                 "Use relative paths.\n\n"
                 "Always reply in the same language the user used. "
                 "Do not translate, do not add an English translation, "
-                "do not echo the user's message back."
+                "do not echo the user's message back.\n\n"
+                "If the user's message arrived as a voice transcription "
+                "(prompt starts with 'Voice message transcription:'), the "
+                "bot will automatically synthesize your reply into a voice "
+                "message and deliver it. You CAN reply with voice — that "
+                "happens transparently. Never say 'I can't send audio' or "
+                "similar; just answer naturally. Keep voice replies short "
+                "and conversational (a couple sentences), no markdown, no "
+                "code blocks, no bullet lists — those don't read well as "
+                "speech."
             )
             claude_md_path = Path(working_directory) / "CLAUDE.md"
             if claude_md_path.exists():
