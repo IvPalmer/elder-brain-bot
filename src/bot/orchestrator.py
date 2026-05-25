@@ -520,7 +520,7 @@ class MessageOrchestrator:
                 except Exception:
                     sync_line = "\n\n🧵 Topic sync failed. Run /sync_threads to retry."
         current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
+            "current_directory", self.settings.home_directory
         )
         dir_display = f"<code>{current_dir}/</code>"
 
@@ -549,7 +549,7 @@ class MessageOrchestrator:
     ) -> None:
         """Compact one-line status, no buttons."""
         current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
+            "current_directory", self.settings.home_directory
         )
         dir_display = str(current_dir)
 
@@ -995,7 +995,7 @@ class MessageOrchestrator:
             return
 
         current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
+            "current_directory", self.settings.home_directory
         )
         session_id = context.user_data.get("claude_session_id")
 
@@ -1275,7 +1275,7 @@ class MessageOrchestrator:
             return
 
         current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
+            "current_directory", self.settings.home_directory
         )
         session_id = context.user_data.get("claude_session_id")
 
@@ -1501,7 +1501,7 @@ class MessageOrchestrator:
             return
 
         current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
+            "current_directory", self.settings.home_directory
         )
         session_id = context.user_data.get("claude_session_id")
         force_new = bool(context.user_data.get("force_new_session"))

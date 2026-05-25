@@ -311,7 +311,7 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Get current directory (default to approved directory)
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -370,7 +370,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     default_prompt = "Please continue where we left off"
 
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:
@@ -514,7 +514,7 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     # Get current directory
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:
@@ -625,7 +625,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     target_path = " ".join(context.args)
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
     project_root = _get_thread_project_root(settings, context)
     directory_root = project_root or settings.approved_directory
@@ -741,7 +741,7 @@ async def print_working_directory(
     """Handle /pwd command."""
     settings: Settings = context.bot_data["settings"]
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     relative_path = current_dir.relative_to(settings.approved_directory)
@@ -869,7 +869,7 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Get session info
     claude_session_id = context.user_data.get("claude_session_id")
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -1031,7 +1031,7 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Get current directory for display
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -1089,7 +1089,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # Get current directory
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:
@@ -1157,7 +1157,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Get current directory
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:

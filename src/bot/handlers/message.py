@@ -345,7 +345,7 @@ async def handle_text_message(
 
         # Get current directory
         current_dir = context.user_data.get(
-            "current_directory", settings.approved_directory
+            "current_directory", settings.home_directory
         )
 
         # Get existing session ID
@@ -813,7 +813,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # Get current directory and session
         current_dir = context.user_data.get(
-            "current_directory", settings.approved_directory
+            "current_directory", settings.home_directory
         )
         session_id = context.user_data.get("claude_session_id")
 
@@ -940,7 +940,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             # Get current directory and session
             current_dir = context.user_data.get(
-                "current_directory", settings.approved_directory
+                "current_directory", settings.home_directory
             )
             session_id = context.user_data.get("claude_session_id")
 
@@ -1056,7 +1056,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
         current_dir = context.user_data.get(
-            "current_directory", settings.approved_directory
+            "current_directory", settings.home_directory
         )
         session_id = context.user_data.get("claude_session_id")
 
@@ -1158,7 +1158,7 @@ async def _generate_placeholder_response(
     """Generate placeholder response until Claude integration is implemented."""
     settings: Settings = context.bot_data["settings"]
     current_dir = getattr(
-        context.user_data, "current_directory", settings.approved_directory
+        context.user_data, "current_directory", settings.home_directory
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -1241,7 +1241,7 @@ def _update_working_directory_from_claude_response(
 
     content = claude_response.content.lower()
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     for pattern in patterns:

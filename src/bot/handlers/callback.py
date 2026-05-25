@@ -115,7 +115,7 @@ async def handle_cd_callback(
 
     try:
         current_dir = context.user_data.get(
-            "current_directory", settings.approved_directory
+            "current_directory", settings.home_directory
         )
         project_root = _get_thread_project_root(settings, context)
         directory_root = project_root or settings.approved_directory
@@ -426,7 +426,7 @@ async def _handle_new_session_action(query, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data["session_started"] = True
 
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -488,7 +488,7 @@ async def _handle_end_session_action(query, context: ContextTypes.DEFAULT_TYPE) 
 
     # Get current directory for display
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -535,7 +535,7 @@ async def _handle_continue_action(query, context: ContextTypes.DEFAULT_TYPE) -> 
     claude_integration: ClaudeIntegration = context.bot_data.get("claude_integration")
 
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:
@@ -642,7 +642,7 @@ async def _handle_status_action(query, context: ContextTypes.DEFAULT_TYPE) -> No
 
     claude_session_id = context.user_data.get("claude_session_id")
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -719,7 +719,7 @@ async def _handle_ls_action(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle ls action."""
     settings: Settings = context.bot_data["settings"]
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:
@@ -896,7 +896,7 @@ async def handle_quick_action_callback(
 
     settings: Settings = context.bot_data["settings"]
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:
@@ -1036,7 +1036,7 @@ async def handle_conversation_callback(
         context.user_data["session_started"] = False
 
         current_dir = context.user_data.get(
-            "current_directory", settings.approved_directory
+            "current_directory", settings.home_directory
         )
         relative_path = current_dir.relative_to(settings.approved_directory)
 
@@ -1099,7 +1099,7 @@ async def handle_git_callback(
         return
 
     current_dir = context.user_data.get(
-        "current_directory", settings.approved_directory
+        "current_directory", settings.home_directory
     )
 
     try:

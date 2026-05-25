@@ -29,12 +29,15 @@ services:
     env_file:
       - /etc/elder-brain-bot/.env
     environment:
-      # Bot's "approved working surface". Set to / so the bot can operate on
-      # any project, whether it lives under /home/ubuntu (plain compose) or
-      # /etc/dokploy (Dokploy-managed app/compose source clones). Container
-      # is isolated; APPROVED_DIRECTORY just gates which paths the bot will
-      # accept user commands against.
+      # APPROVED_DIRECTORY = security boundary (what paths are allowed).
+      # Set to / so the bot can operate on any mounted path (plain-compose
+      # projects under /home/ubuntu AND Dokploy clones under /etc/dokploy).
       APPROVED_DIRECTORY: /
+      # DEFAULT_WORKING_DIRECTORY = where conversations START (the "home").
+      # /home/ubuntu is the VPS project root, so Claude always has full
+      # context of all projects (master-trader, veludo, dsrptv, ocdj, etc.)
+      # and reads /home/ubuntu/CLAUDE.md on every new session.
+      DEFAULT_WORKING_DIRECTORY: /home/ubuntu
       DATABASE_URL: sqlite:///data/bot.db
       API_SERVER_PORT: 8088
       ENVIRONMENT: production

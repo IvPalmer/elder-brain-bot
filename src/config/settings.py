@@ -41,6 +41,14 @@ class Settings(BaseSettings):
 
     # Security
     approved_directory: Path = Field(..., description="Base directory for projects")
+    default_working_directory: Optional[Path] = Field(
+        None,
+        description=(
+            "Default CWD for new conversations. Falls back to approved_directory "
+            "if not set. Use this when approved_directory is permissive (e.g. /) "
+            "but you want conversations to start in a specific project root."
+        ),
+    )
     allowed_users: Optional[List[int]] = Field(
         None, description="Allowed Telegram user IDs"
     )
@@ -314,6 +322,15 @@ class Settings(BaseSettings):
         ),
         ge=0.0,
     )
+
+    @property
+    def home_directory(self) -> Path:
+        """Effective default working directory for new conversations.
+
+        Returns default_working_directory if set, otherwise approved_directory.
+        Use this as the fallback CWD in user_data.get("current_directory", ...).
+        """
+        return self.default_working_directory or self.approved_directory
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
