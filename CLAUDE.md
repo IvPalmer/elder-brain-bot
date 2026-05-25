@@ -24,7 +24,7 @@ cd /home/ubuntu/elder-brain-bot && docker compose up -d
 **Watchdog:** Removed (was causing unnecessary restart loops). No host-side watchdog active. Docker's own restart policy (`unless-stopped`) handles recovery. If the bot bricks itself via a bad `.env` edit, operator must manually restore from `.env.last-good`.
 
 **Whitelist of env keys safe for self-edit** (don't touch others without operator approval):
-`TTS_VOICE`, `TTS_RATE`, `TTS_PITCH`, `TTS_MAX_CHARS`, `TTS_MODEL`, `ENABLE_VOICE_REPLIES`, `ENABLE_VOICE_MESSAGES`, `VOICE_PROVIDER`, `VOICE_TRANSCRIPTION_MODEL`, `LOG_LEVEL`, `CLAUDE_MAX_TURNS`.
+`TTS_VOICE`, `TTS_RATE`, `TTS_PITCH`, `TTS_MAX_CHARS`, `TTS_MODEL`, `ENABLE_VOICE_REPLIES`, `ENABLE_VOICE_MESSAGES`, `VOICE_PROVIDER`, `VOICE_TRANSCRIPTION_MODEL`, `LOG_LEVEL`, `CLAUDE_MAX_TURNS`, `BOT_CAVEMAN_MODE`.
 
 **Never self-edit:** `TELEGRAM_BOT_TOKEN`, `*_API_KEY`, `APPROVED_DIRECTORY`, `DATABASE_URL`, `AUTH_*`. These require operator intent.
 

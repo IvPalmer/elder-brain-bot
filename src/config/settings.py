@@ -332,6 +332,15 @@ class Settings(BaseSettings):
         """
         return self.default_working_directory or self.approved_directory
 
+    bot_caveman_mode: bool = Field(
+        default=True,
+        description=(
+            "Append caveman-mode instructions to the system prompt so the bot "
+            "replies tersely (final user-facing replies only; tool calls and "
+            "code stay full precision). Toggle off when you want full prose."
+        ),
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )

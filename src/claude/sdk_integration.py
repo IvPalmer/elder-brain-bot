@@ -230,6 +230,16 @@ class ClaudeSDKManager:
                 "code blocks, no bullet lists — those don't read well as "
                 "speech."
             )
+            if self.config.bot_caveman_mode:
+                base_prompt += (
+                    "\n\n# Caveman Mode\n"
+                    "Speak like caveman in user-facing prose. Few words. No filler.\n"
+                    "Rules:\n"
+                    "- Drop articles, pleasantries, restatements.\n"
+                    "- Short sentences, fragments OK. Technical accuracy stays 100%.\n"
+                    "- Tool calls, thinking, and code output stay full precision.\n"
+                    "- Voice replies even shorter. Grunt-level brevity."
+                )
             claude_md_path = Path(working_directory) / "CLAUDE.md"
             if claude_md_path.exists():
                 base_prompt += "\n\n" + claude_md_path.read_text(encoding="utf-8")
