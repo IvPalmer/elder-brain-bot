@@ -131,17 +131,30 @@ class ClaudeIntegration:
                         # Definitive failure — session is gone on Claude's side
                         await self.session_manager.remove_session(session.session_id)
 
+                    # Build context bridge: summarize the dead session's last
+                    # messages so the new session isn't completely blank.
+                    context_bridge = await self._build_session_bridge(
+                        session.session_id, user_id
+                    )
+                    bridge_extra = memory_prompt
+                    if context_bridge:
+                        bridge_extra = (
+                            (memory_prompt + "\n\n" if memory_prompt else "")
+                            + context_bridge
+                        )
+
                     # Create a fresh session and retry
                     session = await self.session_manager.get_or_create_session(
                         user_id, working_directory
                     )
+
                     response = await self._execute(
                         prompt=prompt,
                         working_directory=working_directory,
                         session_id=None,
                         continue_session=False,
                         stream_callback=on_stream,
-                        system_prompt_extra=memory_prompt,
+                        system_prompt_extra=bridge_extra,
                         user_id=user_id,
                     )
                 else:
@@ -227,6 +240,58 @@ class ClaudeIntegration:
             return None
 
         return max(matching_sessions, key=lambda s: s.last_used)
+
+    async def _build_session_bridge(
+        self,
+        failed_session_id: str,
+        user_id: int,
+        max_messages: int = 5,
+    ) -> str:
+        """Build a context bridge from the last messages of a dead session.
+
+        When a session resume fails, this provides continuity by injecting
+        a summary of recent exchanges into the new session's system prompt.
+        """
+        try:
+            storage = self.session_manager.storage
+            if not storage:
+                return ""
+            db = getattr(storage, "db_manager", None)
+            if not db:
+                return ""
+
+            async with db.connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT prompt, substr(response, 1, 300) as response "
+                    "FROM messages WHERE session_id = ? AND user_id = ? "
+                    "ORDER BY timestamp DESC LIMIT ?",
+                    (failed_session_id, user_id, max_messages),
+                )
+                rows = await cursor.fetchall()
+
+            if not rows:
+                return ""
+
+            lines = [
+                "⚠️ CONTEXT BRIDGE — the previous session crashed mid-conversation. "
+                "Here are the last exchanges (most recent first) so you can maintain "
+                "continuity. The user was NOT notified of the crash yet; acknowledge "
+                "it briefly and continue where you left off:\n"
+            ]
+            for prompt_text, response_text in reversed(rows):
+                lines.append(f"User: {prompt_text[:200]}")
+                if response_text:
+                    lines.append(f"You replied: {response_text[:200]}...")
+                lines.append("")
+
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning(
+                "Failed to build session bridge",
+                failed_session_id=failed_session_id,
+                error=str(e),
+            )
+            return ""
 
     async def continue_session(
         self,
