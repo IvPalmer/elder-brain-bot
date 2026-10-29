@@ -486,8 +486,8 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
-        # Pre-filtering removes disallowed from allowed list, so disallowed is None
-        assert captured_options[0].disallowed_tools is None
+        # Pre-filtering removes disallowed from allowed list, so disallowed is []
+        assert captured_options[0].disallowed_tools == []
 
     async def test_allowed_tools_passed_to_options(self, tmp_path):
         """Test that allowed_tools from config are passed to ClaudeAgentOptions."""
@@ -519,8 +519,8 @@ class TestClaudeSandboxSettings:
         # Pre-filtering returns the allowed list as-is when no disallowed tools
         assert captured_options[0].allowed_tools == ["Read", "Write", "Bash"]
 
-    async def test_disable_tool_validation_sets_allowed_tools_none(self, tmp_path):
-        """allowed_tools=None when DISABLE_TOOL_VALIDATION=true."""
+    async def test_disable_tool_validation_sets_allowed_tools_empty(self, tmp_path):
+        """allowed_tools=[] when DISABLE_TOOL_VALIDATION=true."""
         config = Settings(
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
@@ -548,8 +548,8 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
-        assert captured_options[0].allowed_tools is None
-        assert captured_options[0].disallowed_tools is None
+        assert captured_options[0].allowed_tools == []
+        assert captured_options[0].disallowed_tools == []
 
     async def test_tool_validation_enabled_passes_configured_tools(self, tmp_path):
         """allowed/disallowed_tools passed when DISABLE_TOOL_VALIDATION=false."""
@@ -580,9 +580,9 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
-        # Pre-filtering: "WebFetch" removed from allowed, disallowed is None
+        # Pre-filtering: "WebFetch" removed from allowed, disallowed is []
         assert captured_options[0].allowed_tools == ["Read", "Write"]
-        assert captured_options[0].disallowed_tools is None
+        assert captured_options[0].disallowed_tools == []
 
     async def test_empty_cli_path_coerced_to_none(self, tmp_path):
         """Empty CLAUDE_CLI_PATH ('') is coerced to None so SDK auto-discovers the CLI."""
