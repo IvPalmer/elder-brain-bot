@@ -252,17 +252,20 @@ class ClaudeSDKManager:
             if system_prompt_extra:
                 base_prompt += "\n\n" + system_prompt_extra
 
-            # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
-            # tools so the SDK does not restrict tool usage (e.g. MCP tools).
+            # When DISABLE_TOOL_VALIDATION=true, pass empty lists for
+            # allowed/disallowed tools so the SDK does not restrict tool usage
+            # (e.g. MCP tools). claude-agent-sdk 0.2 types both as list[str]
+            # and calls list() on allowed_tools, so None raises TypeError;
+            # an empty list omits the CLI flags exactly as None did on 0.1.
+            sdk_allowed_tools: List[str]
             if self.config.disable_tool_validation:
-                sdk_allowed_tools = None
-                sdk_disallowed_tools = None
+                sdk_allowed_tools = []
             else:
                 sdk_allowed_tools = filter_denied_tools(
                     self.config.claude_allowed_tools or [],
                     self.config.claude_disallowed_tools,
                 )
-                sdk_disallowed_tools = None  # Already filtered out
+            sdk_disallowed_tools: List[str] = []  # Already filtered out
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
@@ -339,6 +342,10 @@ class ClaudeSDKManager:
                                 "Skipping unparseable message",
                                 error=str(e),
                             )
+                            continue
+                        # SDK 0.2 returns None for unknown message types
+                        # (0.1 raised MessageParseError); skip them alike.
+                        if message is None:
                             continue
 
                         messages.append(message)
