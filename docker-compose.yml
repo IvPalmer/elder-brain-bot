@@ -72,6 +72,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:rw
     networks:
       - dokploy-network
+      # Master-Trader compose network: lets the bot query the Freqtrade
+      # bots by container name (ft-keltner-bounce, ft-funding-fade, ...).
+      - master-trader
     deploy:
       resources:
         limits:
@@ -99,3 +102,6 @@ volumes:
 networks:
   dokploy-network:
     external: true
+  master-trader:
+    external: true
+    name: compose-bypass-mobile-port-fbk1m6_default
