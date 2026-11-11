@@ -6,7 +6,7 @@ Read docs/STATUS.md first: what runs where, the deploy flow and the rebuild trap
 
 ## Project Overview
 
-The operator's Telegram bot (`@elder_brain_bot`), giving remote access to Claude Code on the VPS. Python 3.10+, built with Poetry, using `python-telegram-bot` for Telegram and `claude-agent-sdk` for Claude Code integration. `IvPalmer/elder-brain-bot` (private) started as a fork of `RichardAtCT/claude-code-telegram`: `palmer-main` is ours and what deploys, `main` mirrors upstream. Work on `claude/<issue>-<topic>` (or `codex/...`) branches and PR into `palmer-main`.
+The operator's Telegram bot (`@elder_brain_bot`), giving remote access to Claude Code on the VPS. Python 3.11+, built with Poetry, using `python-telegram-bot` for Telegram and `claude-agent-sdk` for Claude Code integration. `IvPalmer/elder-brain-bot` (private) started as a fork of `RichardAtCT/claude-code-telegram`: `palmer-main` is ours and what deploys, `main` mirrors upstream. Work on `claude/<issue>-<topic>` (or `codex/...`) branches and PR into `palmer-main`.
 
 WhatsApp: the bot reaches the WhatsApp bridge and is bound by the WhatsApp section of `~/Dev/AGENTS.md` and elder-brain `docs/WHATSAPP-RULES.md` (on the VPS, `/home/ubuntu/elder-brain/docs/WHATSAPP-RULES.md`; one operator instruction = one message to one existing chat, `[elder-brain] ` prefix).
 
